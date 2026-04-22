@@ -103,14 +103,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .ci-check.on{background:var(--blue);border-color:var(--blue)}
 .ci-check svg{display:none;width:11px;height:11px}.ci-check.on svg{display:block}
 
-/* TOTAL BAR */
-.total-bar{background:var(--bg2);border-top:1px solid var(--border);padding:11px 12px;flex-shrink:0}
-.total-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+/* TOTAL BAR FLUTUANTE */
+.total-bar{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;background:var(--bg);border-top:1px solid var(--border);border-radius:16px 16px 0 0;padding:14px 16px 20px;z-index:50;box-shadow:0 -4px 24px rgba(0,0,0,.12)}
+.total-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
 .total-label{font-size:12px;color:var(--text3)}
-.total-val{font-size:18px;font-weight:600;color:var(--blue)}
-.total-pessoa{font-size:12px;color:var(--text3);margin-bottom:4px}
-.total-pessoa span{font-weight:500;color:var(--text)}
-.btn-pagar{width:100%;padding:10px;background:var(--blue);color:#fff;border:none;border-radius:var(--rs);font-size:13px;font-weight:500;cursor:pointer;font-family:inherit}
+.total-val{font-size:26px;font-weight:700;color:var(--blue)}
+.total-pessoas{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.total-pessoa-pill{background:var(--bg2);border:1px solid var(--border);border-radius:20px;padding:4px 10px;font-size:11px;color:var(--text2)}
+.total-pessoa-pill b{color:var(--text);font-weight:600}
+.btn-pagar{width:100%;padding:11px;background:var(--blue);color:#fff;border:none;border-radius:var(--rs);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;letter-spacing:.01em}
 
 /* RETIRADA */
 .ret-limite{background:var(--amber-l);border:1px solid var(--amber-m);border-radius:var(--r);padding:11px 13px;margin-bottom:12px}
@@ -216,8 +217,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <div id="todasContas" style="margin-top:12px"><div class="loading">Carregando...</div></div>
     </div>
     <div class="total-bar" id="totalBar" style="display:none">
-      <div class="total-row"><div class="total-label">Total selecionado</div><div class="total-val" id="totalVal">R$0,00</div></div>
-      <div id="totalPorPessoa"></div>
+      <div class="total-row">
+        <div>
+          <div class="total-label">Total selecionado</div>
+          <div class="total-val" id="totalVal">R$0,00</div>
+        </div>
+        <button onclick="limparSelecao()" style="background:none;border:1px solid var(--border2);border-radius:var(--rs);padding:6px 12px;font-size:12px;color:var(--text3);cursor:pointer;font-family:inherit">Limpar</button>
+      </div>
+      <div class="total-pessoas" id="totalPorPessoa"></div>
       <button class="btn-pagar" onclick="pagarSelecionados()">Confirmar pagamento selecionados</button>
     </div>
   </div>
@@ -462,7 +469,8 @@ function setForma(id,f){
 }
 
 function renderTodasContas(){
-  const lista=contasFiltradas();
+  let lista=contasFiltradas();
+  if(diaSel!==null) lista=lista.filter(c=>c.dia_vencimento===diaSel);
   const pend=lista.filter(c=>!statusMes[c.id]?.pago).sort((a,b)=>a.dia_vencimento-b.dia_vencimento);
   const pagos=lista.filter(c=>statusMes[c.id]?.pago).sort((a,b)=>a.dia_vencimento-b.dia_vencimento);
   const totalPend=pend.reduce((s,c)=>s+(statusMes[c.id]?.valorPago||c.valor),0);
@@ -510,7 +518,7 @@ function renderConta(c){
         ${!e.pago?`<div class="${chk}" onclick="toggleSel(${c.id})"><svg viewBox="0 0 10 10" fill="none" stroke="#fff" stroke-width="2"><polyline points="1.5,5 4,7.5 8.5,2.5"/></svg></div>`:''}
         <div>
           <div class="ci-nm">${c.nome}${bd}${parcBadge}</div>
-          <div class="ci-dt">${c.beneficiario}</div>
+          <div class="ci-dt">${c.beneficiario} · dia ${c.dia_vencimento}</div>
         </div>
       </div>
       <div class="ci-right">
@@ -580,7 +588,10 @@ function renderTotalBar(){
     if(!pp[c.beneficiario])pp[c.beneficiario]=0;pp[c.beneficiario]+=v;
   });
   let pph='';
-  Object.entries(pp).forEach(([p,v])=>{pph+=`<div class="total-pessoa">${p}: <span>${fmtV(v)}</span></div>`;});
+  Object.entries(pp).forEach(([p,v])=>{
+    const nome=p.split(' ')[0];
+    pph+=`<div class="total-pessoa-pill">${nome}: <b>${fmtV(v)}</b></div>`;
+  });
   document.getElementById('totalPorPessoa').innerHTML=pph;
 }
 
