@@ -886,39 +886,23 @@ async function carregarRelatorio(){
     });
   }
 
-  // Renderizar filtros de beneficiário
+  // Renderizar filtros de beneficiário — usar nome completo como ID
   const benefNomes = Object.keys(porBenefGlobal).sort();
-  benefSelecionados = new Set(benefNomes); // todos selecionados por padrão
+  benefSelecionados = new Set(benefNomes);
   let htmlFiltros = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">`;
-  htmlFiltros += `<button class="fbtn on-all" onclick="toggleBenef('__all__',this)">Todos</button>`;
+  htmlFiltros += `<button class="fbtn on-all" id="bf-__all__" onclick="toggleBenef('__all__',this)">Todos</button>`;
   benefNomes.forEach(n=>{
-    const nome=n.split(' ')[0];
-    htmlFiltros+=`<button class="fbtn on-all" id="bf-${nome}" onclick="toggleBenef('${n}',this)">${nome}</button>`;
+    const id=n.replace(/\s+/g,'_');
+    htmlFiltros+=`<button class="fbtn on-all" id="bf-${id}" onclick="toggleBenef('${n}',this)">${n}</button>`;
   });
   htmlFiltros+=`</div>`;
   htmlFiltros+=`<div id="relBenefCards"></div>`;
   document.getElementById('relBeneficiario').innerHTML=htmlFiltros;
   renderBenefCards();
 
-  // Gastos variáveis — combinar pagamentos_mes + gastos do chat
+  // Gastos variáveis — somente da tabela gastos (não inclui fixos)
   const gastosChatRaw = await sbGet('gastos','select=*&order=created_at.desc');
-  const gastosChat = Array.isArray(gastosChatRaw) ? gastosChatRaw : [];
-
-  // Converter pagamentos fixos em gastos também
-  const gastosFixos = Array.isArray(pagamentos) ? pagamentos.map(p=>{
-    const c=contas.find(x=>x.id===p.conta_id);
-    if(!c)return null;
-    return {
-      descricao: c.nome,
-      valor: p.valor_pago||c.valor,
-      categoria: c.categoria||'Custo Fixo',
-      data_lancamento: p.data_pagamento||p.mes,
-      conta: c.tipo,
-      mes: p.mes
-    };
-  }).filter(Boolean) : [];
-
-  todosGastos = [...gastosChat, ...gastosFixos];
+  todosGastos = Array.isArray(gastosChatRaw) ? gastosChatRaw : [];
   renderGastos();
 }
 
@@ -935,11 +919,13 @@ function toggleBenef(nome, btn){
     else benefSelecionados.add(nome);
   }
   // Atualizar visual dos botões
-  const todos=Object.keys(porBenefGlobal);
-  document.querySelectorAll('[id^="bf-"]').forEach(b=>{
-    const n=todos.find(x=>x.startsWith(b.id.replace('bf-','')));
-    if(n) b.className=benefSelecionados.has(n)?'fbtn on-all':'fbtn';
+  Object.keys(porBenefGlobal).forEach(n=>{
+    const id='bf-'+n.replace(/\s+/g,'_');
+    const b=document.getElementById(id);
+    if(b) b.className=benefSelecionados.has(n)?'fbtn on-all':'fbtn';
   });
+  const allBtn=document.getElementById('bf-__all__');
+  if(allBtn) allBtn.className=benefSelecionados.size===Object.keys(porBenefGlobal).length?'fbtn on-all':'fbtn';
   renderBenefCards();
 }
 
