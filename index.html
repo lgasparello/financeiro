@@ -187,7 +187,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <div class="app">
   <div class="hdr">
     <div><div class="hdr-l">LLG Financeiro</div><div class="hdr-s" id="hdrSub">Lucas Gasparello</div></div>
-    <div class="pills"><span class="pill pill-b" id="saldoLLG">LLG R$15.355</span><span class="pill pill-g" id="saldoPes">Pes. R$311</span></div>
+    <div class="pills">
+      <span class="pill pill-b" id="saldoLLG" onclick="ajustarSaldo('llg')" style="cursor:pointer" title="Toque para ajustar">LLG R$15.355</span>
+      <span class="pill pill-g" id="saldoPes" onclick="ajustarSaldo('pessoal')" style="cursor:pointer" title="Toque para ajustar">Pes. R$311</span>
+    </div>
   </div>
   <div class="tabs">
     <button class="tb on" onclick="showTab('contas',this)">Contas</button>
@@ -566,6 +569,9 @@ async function pagarConta(id){
   const dataStr=`${DIA_HOJE.toString().padStart(2,'0')}/${String(mesAtual.m+1).padStart(2,'0')}/${mesAtual.y}`;
   statusMes[id]={...statusMes[id],pago:true,valorPago:v,data:dataStr,selecionado:false};
   await sbUpsert('pagamentos_mes',{conta_id:id,mes:ms,pago:true,valor_pago:v,forma:statusMes[id].forma,data_pagamento:dataStr});
+  // Abater do saldo correto
+  const contaSaldo = c.tipo==='empresa'?'llg':'pessoal';
+  await abaterSaldo(contaSaldo, v);
   renderTodasContas();renderDias();if(diaSel!==null)renderDiaInfo(diaSel);
   toast('Pagamento confirmado!');
 }
@@ -576,8 +582,13 @@ async function pagarSelecionados(){
 
 async function desfazerPagamento(id){
   const ms=mesStr(mesAtual.y,mesAtual.m);
+  const v=statusMes[id]?.valorPago||0;
+  const c=contas.find(x=>x.id===id);
   statusMes[id]={...statusMes[id],pago:false,selecionado:false};
   await sbUpsert('pagamentos_mes',{conta_id:id,mes:ms,pago:false,valor_pago:statusMes[id].valorPago,forma:statusMes[id].forma});
+  // Repor saldo
+  const contaSaldo = c.tipo==='empresa'?'llg':'pessoal';
+  await reporSaldo(contaSaldo, v);
   renderTodasContas();renderDias();if(diaSel!==null)renderDiaInfo(diaSel);
   toast('Desfeito');
 }
@@ -1040,8 +1051,45 @@ function showTab(id,btn){
   if(id==='retirada')atualizarRetirada();
 }
 
-// INICIALIZAR
+// SALDOS DINAMICOS
+let saldos = {llg: 15355.33, pessoal: 311.34};
+
+async function carregarSaldos(){
+  try{
+    const data = await sbGet('saldos','select=*');
+    if(Array.isArray(data)) data.forEach(s=>{saldos[s.id]=s.valor;});
+  }catch(e){}
+  atualizarPillsSaldo();
+}
+
+function atualizarPillsSaldo(){
+  document.getElementById('saldoLLG').textContent=`LLG ${fmtV(saldos.llg)}`;
+  document.getElementById('saldoPes').textContent=`Pes. ${fmtV(saldos.pessoal)}`;
+}
+
+async function abaterSaldo(conta, valor){
+  saldos[conta] = Math.max(0, (saldos[conta]||0) - valor);
+  await sbUpsert('saldos',{id:conta, valor:saldos[conta]});
+  atualizarPillsSaldo();
+}
+
+async function reporSaldo(conta, valor){
+  saldos[conta] = (saldos[conta]||0) + valor;
+  await sbUpsert('saldos',{id:conta, valor:saldos[conta]});
+  atualizarPillsSaldo();
+}
+
+async function ajustarSaldo(conta){
+  const atual = saldos[conta]||0;
+  const novo = prompt(`Saldo atual: ${fmtV(atual)}\nNovo saldo:`, atual.toFixed(2));
+  if(novo===null||isNaN(parseFloat(novo)))return;
+  saldos[conta] = parseFloat(novo);
+  await sbUpsert('saldos',{id:conta, valor:saldos[conta]});
+  atualizarPillsSaldo();
+  toast('Saldo atualizado!');
+}
 (async()=>{
+  await carregarSaldos();
   await carregarContas();
   await atualizarContas();
   document.getElementById('mesLabel').textContent=mesLabel(mesAtual.y,mesAtual.m);
