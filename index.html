@@ -778,13 +778,13 @@ async function carregarRelatorio(){
   });
   document.getElementById('relParcelamentos').innerHTML=htmlParc||'<div class="empty">Nenhum parcelamento ativo.</div>';
 
-  // Total por beneficiário — carregar do banco
+  // Total por beneficiário — apenas contas pessoais
   const pagamentos=await sbGet('pagamentos_mes','select=*&pago=eq.true');
   porBenefGlobal={};
   if(Array.isArray(pagamentos)){
     pagamentos.forEach(p=>{
       const c=contas.find(x=>x.id===p.conta_id);
-      if(!c)return;
+      if(!c||c.tipo!=='pessoal')return; // só pessoal
       const key=c.beneficiario;
       if(!porBenefGlobal[key]){porBenefGlobal[key]={total:0,items:[]};}
       porBenefGlobal[key].total+=p.valor_pago||c.valor;
@@ -1004,7 +1004,7 @@ async function sendMsg(){
   const inp=document.getElementById('inp'),txt=inp.value.trim();if(!txt)return;
   inp.value='';addMsg(txt,'u');showTyping();
   try{
-    const r=await fetch('https://api.anthropic.com/v1/messages',{
+    const r=await fetch('/api/chat',{
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:600,system:SYS_BASE,messages:[{role:'user',content:txt}]})
     });
