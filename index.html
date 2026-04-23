@@ -249,6 +249,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <div id="relParcelamentos"></div>
       <div class="sh">Total pago por beneficiário — 2026</div>
       <div id="relBeneficiario"><div class="loading">Carregando...</div></div>
+      <div class="sh">Gastos variáveis por categoria</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+        <button class="fbtn on-all" id="catBtn-all" onclick="filtrarCat('all',this)">Todos</button>
+        <button class="fbtn" id="catBtn-alim" onclick="filtrarCat('Alimentação',this)">Alimentação</button>
+        <button class="fbtn" id="catBtn-comb" onclick="filtrarCat('Combustível',this)">Combustível</button>
+        <button class="fbtn" id="catBtn-laz" onclick="filtrarCat('Lazer',this)">Lazer</button>
+        <button class="fbtn" id="catBtn-pet" onclick="filtrarCat('Pet',this)">Pet</button>
+        <button class="fbtn" id="catBtn-comp" onclick="filtrarCat('Compras',this)">Compras</button>
+        <button class="fbtn" id="catBtn-out" onclick="filtrarCat('Outros',this)">Outros</button>
+      </div>
+      <div id="relGastos"><div class="loading">Carregando...</div></div>
       <div style="margin-top:12px">
         <button onclick="gerarJSON()" style="width:100%;padding:10px;background:var(--blue-l);border:1px solid var(--blue-m);border-radius:var(--rs);color:var(--blue);font-size:13px;font-weight:500;cursor:pointer;font-family:inherit">Gerar JSON para agente Excel ↗</button>
       </div>
@@ -631,37 +642,55 @@ async function atualizarRetirada(){
 
 function renderRetirada(){
   const ms=mesStr(mesRet.y,mesRet.m);
-  // Lucro do mês anterior
   const mAnterior=new Date(mesRet.y,mesRet.m-1);
   const msAnt=mesStr(mAnterior.getFullYear(),mAnterior.getMonth());
   const lucroAnt=LUCROS_POR_MES[msAnt]||0;
 
-  // Total já enviado
-  const totalEnv=Object.values(retiradaMes).filter(r=>r.enviado).reduce((s,r)=>s+r.valor,0);
-  const totalPrev=COMPONENTES_RET.reduce((s,c)=>{
-    if(c.fim){const[fy,fm]=c.fim.split('-').map(Number);if(new Date(mesRet.y,mesRet.m)>new Date(fy,fm-1))return s;}
-    const v=retiradaMes[c.id]?.valor||c.valor;
-    return s+v;
-  },0);
-  const excesso=totalPrev>lucroAnt&&lucroAnt>0;
+  // Separar fixos (pro labore, plano, moto) de lucros
+  const totalFixosEnv=Object.entries(retiradaMes)
+    .filter(([k,r])=>r.enviado&&k!=='lucros')
+    .reduce((s,[,r])=>s+r.valor,0);
+  const lucrosEnv=retiradaMes['lucros']?.enviado?retiradaMes['lucros'].valor:0;
+  const totalEnv=totalFixosEnv+lucrosEnv;
+
+  // Lucros previstos vs limite
+  const lucrosPrev=retiradaMes['lucros']?.valor||0;
+  const excessoLucros=lucrosPrev>lucroAnt&&lucroAnt>0;
 
   let html='';
 
-  // Limite
-  html+=`<div class="ret-limite">
-    <div class="ret-limite-lbl">Lucro anterior (${MESES_PT[mAnterior.getMonth()]})</div>
-    <div class="ret-limite-val">${fmtV(lucroAnt)}</div>
-    <div class="ret-limite-sub">Base para limite de retirada</div>
+  // Cards de resumo lado a lado
+  html+=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+    <div class="ret-limite">
+      <div class="ret-limite-lbl">Lucro anterior</div>
+      <div class="ret-limite-val" style="font-size:18px">${fmtV(lucroAnt)}</div>
+      <div class="ret-limite-sub">${MESES_PT[mAnterior.getMonth()]}</div>
+    </div>
+    <div class="ret-total-bar">
+      <div class="ret-total-lbl">Total enviado</div>
+      <div class="ret-total-val" style="font-size:18px">${fmtV(totalEnv)}</div>
+    </div>
   </div>`;
 
-  // Total
-  html+=`<div class="ret-total-bar">
-    <div class="ret-total-lbl">Total enviado</div>
-    <div class="ret-total-val">${fmtV(totalEnv)}</div>
+  // Breakdown fixos vs lucros
+  html+=`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:11px 13px;margin-bottom:12px">
+    <div style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">Composição da retirada</div>
+    <div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-bottom:1px solid var(--border)">
+      <span style="color:var(--text2)">Fixos (Pro Labore + Plano + Moto)</span>
+      <span style="font-weight:500">${fmtV(totalFixosEnv)}</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-bottom:1px solid var(--border)">
+      <span style="color:var(--text2)">Lucros retirados</span>
+      <span style="font-weight:500;color:${excessoLucros?'var(--red)':'var(--green)'}">${fmtV(lucrosEnv)}</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;font-weight:600">
+      <span>Total</span>
+      <span>${fmtV(totalEnv)}</span>
+    </div>
   </div>`;
 
-  if(excesso){
-    html+=`<div class="ret-alerta">Atenção: total previsto ${fmtV(totalPrev)} excede lucro anterior ${fmtV(lucroAnt)}</div>`;
+  if(excessoLucros){
+    html+=`<div class="ret-alerta">Lucros retirados ${fmtV(lucrosPrev)} excedem lucro anterior ${fmtV(lucroAnt)}</div>`;
   }
 
   // Componentes
@@ -713,6 +742,9 @@ async function desfazerRetirada(comp,ms){
 }
 
 // RELATORIO
+let todosGastos = [];
+let catAtual = 'all';
+
 async function carregarRelatorio(){
   // Parcelamentos
   const parc=contas.filter(c=>c.parcela_total&&c.mes_fim);
@@ -761,7 +793,66 @@ async function carregarRelatorio(){
     </div>`;
   });
   document.getElementById('relBeneficiario').innerHTML=htmlBenef||'<div class="empty">Nenhum pagamento registrado ainda.</div>';
+
+  // Gastos variáveis
+  const gastos = await sbGet('gastos','select=*&order=created_at.desc');
+  todosGastos = Array.isArray(gastos) ? gastos : [];
+  renderGastos();
 }
+
+function filtrarCat(cat, btn){
+  catAtual = cat;
+  document.querySelectorAll('[id^="catBtn"]').forEach(b=>{
+    b.className='fbtn';
+  });
+  btn.className='fbtn on-all';
+  renderGastos();
+}
+
+function renderGastos(){
+  const lista = catAtual==='all'
+    ? todosGastos
+    : todosGastos.filter(g=>{
+        const c=(g.categoria||'').toLowerCase();
+        const f=catAtual.toLowerCase();
+        return c.includes(f);
+      });
+
+  if(!lista.length){
+    document.getElementById('relGastos').innerHTML='<div class="empty">Nenhum gasto registrado nesta categoria.</div>';
+    return;
+  }
+
+  // Agrupar por categoria para totais
+  const porCat={};
+  lista.forEach(g=>{
+    const cat=g.categoria||'Outros';
+    if(!porCat[cat])porCat[cat]={total:0,items:[]};
+    porCat[cat].total+=g.valor||0;
+    porCat[cat].items.push(g);
+  });
+
+  const totalGeral=lista.reduce((s,g)=>s+(g.valor||0),0);
+  let html=`<div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:var(--rs);padding:10px 12px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
+    <span style="font-size:12px;color:var(--blue);font-weight:600">${lista.length} gastos</span>
+    <span style="font-size:16px;font-weight:600;color:var(--blue)">${fmtV(totalGeral)}</span>
+  </div>`;
+
+  Object.entries(porCat).sort((a,b)=>b[1].total-a[1].total).forEach(([cat,info])=>{
+    html+=`<div class="rel-card" style="margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <div class="rel-nome">${cat}</div>
+        <span style="font-size:13px;font-weight:600;color:var(--blue)">${fmtV(info.total)}</span>
+      </div>
+      ${info.items.slice(0,5).map(g=>`<div class="rel-row">
+        <span style="color:var(--text2)">${g.descricao||''} · ${g.data_lancamento||''}</span>
+        <span>${fmtV(g.valor)}</span>
+      </div>`).join('')}
+      ${info.items.length>5?`<div style="font-size:11px;color:var(--text3);margin-top:4px">+${info.items.length-5} mais</div>`:''}
+    </div>`;
+  });
+
+  document.getElementById('relGastos').innerHTML=html;
 
 // CHAT IA
 const SYS_BASE=`Você é o assistente financeiro pessoal de Lucas Gasparello, dono da LLG Consultoria.
@@ -823,7 +914,7 @@ async function sendMsg(){
   const inp=document.getElementById('inp'),txt=inp.value.trim();if(!txt)return;
   inp.value='';addMsg(txt,'u');showTyping();
   try{
-    const r=await fetch('/api/chat',{
+    const r=await fetch('https://api.anthropic.com/v1/messages',{
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:600,system:SYS_BASE,messages:[{role:'user',content:txt}]})
     });
