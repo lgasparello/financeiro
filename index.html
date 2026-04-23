@@ -751,6 +751,8 @@ async function desfazerRetirada(comp,ms){
 // RELATORIO
 let todosGastos = [];
 let catAtual = 'all';
+let porBenefGlobal = {};
+let benefSelecionados = new Set();
 
 async function carregarRelatorio(){
   // Parcelamentos
@@ -776,35 +778,115 @@ async function carregarRelatorio(){
   });
   document.getElementById('relParcelamentos').innerHTML=htmlParc||'<div class="empty">Nenhum parcelamento ativo.</div>';
 
-  // Total por beneficiário
+  // Total por beneficiário — carregar do banco
   const pagamentos=await sbGet('pagamentos_mes','select=*&pago=eq.true');
-  const porBenef={};
+  porBenefGlobal={};
   if(Array.isArray(pagamentos)){
     pagamentos.forEach(p=>{
       const c=contas.find(x=>x.id===p.conta_id);
       if(!c)return;
       const key=c.beneficiario;
-      if(!porBenef[key]){porBenef[key]={total:0,items:[]};}
-      porBenef[key].total+=p.valor_pago||c.valor;
-      const mesExiste=porBenef[key].items.find(i=>i.mes===p.mes);
+      if(!porBenefGlobal[key]){porBenefGlobal[key]={total:0,items:[]};}
+      porBenefGlobal[key].total+=p.valor_pago||c.valor;
+      const mesExiste=porBenefGlobal[key].items.find(i=>i.mes===p.mes&&i.nome===c.nome);
       if(mesExiste)mesExiste.val+=(p.valor_pago||c.valor);
-      else porBenef[key].items.push({mes:p.mes,val:p.valor_pago||c.valor,nome:c.nome});
+      else porBenefGlobal[key].items.push({mes:p.mes,val:p.valor_pago||c.valor,nome:c.nome});
     });
   }
-  let htmlBenef='';
-  Object.entries(porBenef).sort((a,b)=>b[1].total-a[1].total).forEach(([nome,info])=>{
-    htmlBenef+=`<div class="rel-card">
-      <div class="rel-nome">${nome}</div>
-      ${info.items.map(i=>`<div class="rel-row"><span>${i.nome} · ${i.mes}</span><span>${fmtV(i.val)}</span></div>`).join('')}
-      <div class="rel-row"><span>Total pago</span><span>${fmtV(info.total)}</span></div>
+
+  // Renderizar filtros de beneficiário
+  const benefNomes = Object.keys(porBenefGlobal).sort();
+  benefSelecionados = new Set(benefNomes); // todos selecionados por padrão
+  let htmlFiltros = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">`;
+  htmlFiltros += `<button class="fbtn on-all" onclick="toggleBenef('__all__',this)">Todos</button>`;
+  benefNomes.forEach(n=>{
+    const nome=n.split(' ')[0];
+    htmlFiltros+=`<button class="fbtn on-all" id="bf-${nome}" onclick="toggleBenef('${n}',this)">${nome}</button>`;
+  });
+  htmlFiltros+=`</div>`;
+  htmlFiltros+=`<div id="relBenefCards"></div>`;
+  document.getElementById('relBeneficiario').innerHTML=htmlFiltros;
+  renderBenefCards();
+
+  // Gastos variáveis — combinar pagamentos_mes + gastos do chat
+  const gastosChatRaw = await sbGet('gastos','select=*&order=created_at.desc');
+  const gastosChat = Array.isArray(gastosChatRaw) ? gastosChatRaw : [];
+
+  // Converter pagamentos fixos em gastos também
+  const gastosFixos = Array.isArray(pagamentos) ? pagamentos.map(p=>{
+    const c=contas.find(x=>x.id===p.conta_id);
+    if(!c)return null;
+    return {
+      descricao: c.nome,
+      valor: p.valor_pago||c.valor,
+      categoria: c.categoria||'Custo Fixo',
+      data_lancamento: p.data_pagamento||p.mes,
+      conta: c.tipo,
+      mes: p.mes
+    };
+  }).filter(Boolean) : [];
+
+  todosGastos = [...gastosChat, ...gastosFixos];
+  renderGastos();
+}
+
+function toggleBenef(nome, btn){
+  if(nome==='__all__'){
+    const todos=Object.keys(porBenefGlobal);
+    if(benefSelecionados.size===todos.length){
+      benefSelecionados.clear();
+    } else {
+      benefSelecionados=new Set(todos);
+    }
+  } else {
+    if(benefSelecionados.has(nome)) benefSelecionados.delete(nome);
+    else benefSelecionados.add(nome);
+  }
+  // Atualizar visual dos botões
+  const todos=Object.keys(porBenefGlobal);
+  document.querySelectorAll('[id^="bf-"]').forEach(b=>{
+    const n=todos.find(x=>x.startsWith(b.id.replace('bf-','')));
+    if(n) b.className=benefSelecionados.has(n)?'fbtn on-all':'fbtn';
+  });
+  renderBenefCards();
+}
+
+function renderBenefCards(){
+  const el=document.getElementById('relBenefCards');
+  if(!el)return;
+  const selecionados=Object.entries(porBenefGlobal)
+    .filter(([n])=>benefSelecionados.has(n))
+    .sort((a,b)=>b[1].total-a[1].total);
+
+  if(!selecionados.length){
+    el.innerHTML='<div class="empty">Selecione um beneficiário.</div>';
+    return;
+  }
+
+  let html='';
+  selecionados.forEach(([nome,info])=>{
+    // Agrupar por nome da conta
+    const porConta={};
+    info.items.forEach(i=>{
+      if(!porConta[i.nome])porConta[i.nome]={total:0,meses:[]};
+      porConta[i.nome].total+=i.val;
+      porConta[i.nome].meses.push({mes:i.mes,val:i.val});
+    });
+    html+=`<div class="rel-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div class="rel-nome">${nome}</div>
+        <span style="font-size:14px;font-weight:600;color:var(--blue)">${fmtV(info.total)}</span>
+      </div>
+      ${Object.entries(porConta).map(([conta,d])=>`
+        <div style="font-size:12px;color:var(--text2);font-weight:500;margin:4px 0 2px">${conta}</div>
+        ${d.meses.sort((a,b)=>a.mes.localeCompare(b.mes)).map(m=>`
+          <div class="rel-row"><span style="color:var(--text3)">${m.mes}</span><span>${fmtV(m.val)}</span></div>
+        `).join('')}
+        <div class="rel-row" style="font-size:12px"><span>Subtotal</span><span style="font-weight:500">${fmtV(d.total)}</span></div>
+      `).join('')}
     </div>`;
   });
-  document.getElementById('relBeneficiario').innerHTML=htmlBenef||'<div class="empty">Nenhum pagamento registrado ainda.</div>';
-
-  // Gastos variáveis
-  const gastos = await sbGet('gastos','select=*&order=created_at.desc');
-  todosGastos = Array.isArray(gastos) ? gastos : [];
-  renderGastos();
+  el.innerHTML=html;
 }
 
 function filtrarCat(cat, btn){
