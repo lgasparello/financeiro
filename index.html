@@ -646,52 +646,59 @@ function renderRetirada(){
   const msAnt=mesStr(mAnterior.getFullYear(),mAnterior.getMonth());
   const lucroAnt=LUCROS_POR_MES[msAnt]||0;
 
-  // Separar fixos (pro labore, plano, moto) de lucros
-  const totalFixosEnv=Object.entries(retiradaMes)
+  // Separar fixos de lucros
+  const fixosEnviados=Object.entries(retiradaMes)
     .filter(([k,r])=>r.enviado&&k!=='lucros')
     .reduce((s,[,r])=>s+r.valor,0);
   const lucrosEnv=retiradaMes['lucros']?.enviado?retiradaMes['lucros'].valor:0;
-  const totalEnv=totalFixosEnv+lucrosEnv;
-
-  // Lucros previstos vs limite
+  const totalEnv=fixosEnviados+lucrosEnv;
   const lucrosPrev=retiradaMes['lucros']?.valor||0;
   const excessoLucros=lucrosPrev>lucroAnt&&lucroAnt>0;
 
   let html='';
 
-  // Cards de resumo lado a lado
-  html+=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+  // Resumo em 3 cards
+  html+=`<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px">
     <div class="ret-limite">
-      <div class="ret-limite-lbl">Lucro anterior</div>
-      <div class="ret-limite-val" style="font-size:18px">${fmtV(lucroAnt)}</div>
+      <div class="ret-limite-lbl">Limite lucros</div>
+      <div class="ret-limite-val" style="font-size:16px">${fmtV(lucroAnt)}</div>
       <div class="ret-limite-sub">${MESES_PT[mAnterior.getMonth()]}</div>
     </div>
+    <div style="background:var(--${excessoLucros?'red':'green'}-l);border:1px solid var(--${excessoLucros?'red':'green'}-m);border-radius:var(--r);padding:11px 13px">
+      <div style="font-size:11px;font-weight:600;color:var(--${excessoLucros?'red':'green'});text-transform:uppercase;letter-spacing:.04em">Lucros retirados</div>
+      <div style="font-size:16px;font-weight:600;color:var(--${excessoLucros?'red':'green'});margin-top:3px">${fmtV(lucrosEnv)}</div>
+      <div style="font-size:11px;color:var(--${excessoLucros?'red':'green'});margin-top:2px">${excessoLucros?'EXCESSO':'OK'}</div>
+    </div>
     <div class="ret-total-bar">
-      <div class="ret-total-lbl">Total enviado</div>
-      <div class="ret-total-val" style="font-size:18px">${fmtV(totalEnv)}</div>
+      <div class="ret-total-lbl">Total geral</div>
+      <div class="ret-total-val" style="font-size:16px">${fmtV(totalEnv)}</div>
     </div>
   </div>`;
 
-  // Breakdown fixos vs lucros
+  // Composição detalhada
   html+=`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:11px 13px;margin-bottom:12px">
-    <div style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">Composição da retirada</div>
+    <div style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">Composição</div>
     <div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-bottom:1px solid var(--border)">
-      <span style="color:var(--text2)">Fixos (Pro Labore + Plano + Moto)</span>
-      <span style="font-weight:500">${fmtV(totalFixosEnv)}</span>
+      <span style="color:var(--text2)">Pro Labore</span>
+      <span style="font-weight:500">${fmtV(retiradaMes['pro_labore']?.enviado?retiradaMes['pro_labore'].valor:0)}</span>
     </div>
     <div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-bottom:1px solid var(--border)">
-      <span style="color:var(--text2)">Lucros retirados</span>
-      <span style="font-weight:500;color:${excessoLucros?'var(--red)':'var(--green)'}">${fmtV(lucrosEnv)}</span>
+      <span style="color:var(--text2)">Plano de Saúde</span>
+      <span style="font-weight:500">${fmtV(retiradaMes['plano_saude']?.enviado?retiradaMes['plano_saude'].valor:0)}</span>
     </div>
-    <div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;font-weight:600">
-      <span>Total</span>
+    <div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-bottom:1px solid var(--border)">
+      <span style="color:var(--text2)">Moto</span>
+      <span style="font-weight:500">${fmtV(retiradaMes['moto']?.enviado?retiradaMes['moto'].valor:0)}</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-bottom:1px solid var(--border)">
+      <span style="color:var(--text2)">Lucros</span>
+      <span style="font-weight:500;color:var(--${excessoLucros?'red':'green'})">${fmtV(lucrosEnv)}${excessoLucros?` ⚠ excede ${fmtV(lucroAnt)}`:''}</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;font-weight:600">
+      <span>Total enviado</span>
       <span>${fmtV(totalEnv)}</span>
     </div>
   </div>`;
-
-  if(excessoLucros){
-    html+=`<div class="ret-alerta">Lucros retirados ${fmtV(lucrosPrev)} excedem lucro anterior ${fmtV(lucroAnt)}</div>`;
-  }
 
   // Componentes
   COMPONENTES_RET.forEach(c=>{
