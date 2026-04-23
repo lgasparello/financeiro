@@ -361,10 +361,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <!-- PAINEL -->
   <div id="pnl-painel" class="pnl">
     <div class="scr">
-      <div class="sh" style="margin-top:0">Saldos reais — 22/04/2026</div>
+      <div class="sh" style="margin-top:0">Saldos reais — <span id="painelData">22/04/2026</span></div>
       <div class="grid2">
-        <div class="mc"><div class="mc-lbl">Saldo LLG</div><div class="mc-val" style="color:var(--blue)">R$15.355</div><div class="mc-sub">Conta 344641813</div></div>
-        <div class="mc"><div class="mc-lbl">Saldo pessoal</div><div class="mc-val" style="color:var(--green)">R$311</div><div class="mc-sub">Conta 179966227</div></div>
+        <div class="mc"><div class="mc-lbl">Saldo LLG</div><div class="mc-val" style="color:var(--blue)" id="painelLLG">R$14.705</div><div class="mc-sub">Conta 344641813</div></div>
+        <div class="mc"><div class="mc-lbl">Saldo pessoal</div><div class="mc-val" style="color:var(--green)" id="painelPes">R$419</div><div class="mc-sub">Conta 179966227</div></div>
       </div>
       <div class="sh">Abril — empresa</div>
       <div class="grid2">
@@ -1229,6 +1229,13 @@ async function carregarSaldos(){
 function atualizarPillsSaldo(){
   document.getElementById('saldoLLG').textContent=`LLG ${fmtV(saldos.llg)}`;
   document.getElementById('saldoPes').textContent=`Pes. ${fmtV(saldos.pessoal)}`;
+  // Atualizar painel também
+  const painelLLG=document.getElementById('painelLLG');
+  const painelPes=document.getElementById('painelPes');
+  const painelData=document.getElementById('painelData');
+  if(painelLLG) painelLLG.textContent=fmtV(saldos.llg);
+  if(painelPes) painelPes.textContent=fmtV(saldos.pessoal);
+  if(painelData) painelData.textContent=hoje.toLocaleDateString('pt-BR');
 }
 
 async function abaterSaldo(conta, valor){
