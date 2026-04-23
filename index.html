@@ -1026,6 +1026,8 @@ async function sendMsg(){
     if(parsed&&parsed.a==='reg'){
       addMsg(`<b>${parsed.desc}</b> <span class="bdt ${parsed.conta==='empresa'?'bd-l':'bd-p'}">${parsed.conta==='empresa'?'LLG':'Pes.'}</span><br><span style="color:var(--red)">-${fmtV(parsed.valor)}</span> · ${parsed.cat}<br><span style="font-size:12px;color:var(--green)">${parsed.msg}</span>`,'g');
       await sbPost('gastos',{descricao:parsed.desc,valor:parsed.valor,conta:parsed.conta,mes:parsed.mes,categoria:parsed.cat,forma_pagamento:'Via chat',data_lancamento:hoje.toLocaleDateString('pt-BR')});
+      const contaSaldo=parsed.conta==='empresa'?'llg':'pessoal';
+      await abaterSaldo(contaSaldo, parsed.valor);
       toast('Gasto registrado!');
     }else{
       addMsg(resp.replace(/\n/g,'<br>'),'a');
