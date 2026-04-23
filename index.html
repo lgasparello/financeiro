@@ -1019,8 +1019,13 @@ async function sendMsg(){
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:600,system:SYS_BASE,messages:[{role:'user',content:txt}]})
     });
-    const d=await r.json(),resp=d.content?.[0]?.text||'Erro.';
+    const d=await r.json(),resp=d.content?.[0]?.text||'';
     rmTyping();
+    if(!resp){
+      const errMsg=d.error?.message||d.type||JSON.stringify(d);
+      addMsg(`Erro da API: ${errMsg}`,'a');
+      return;
+    }
     let parsed=null;
     try{parsed=JSON.parse(resp.replace(/```json|```/g,'').trim());}catch(e){}
     if(parsed&&parsed.a==='reg'){
