@@ -397,7 +397,18 @@ const SB_HDR={'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'a
 async function sbGet(t,q=''){const r=await fetch(`${SB_URL}/rest/v1/${t}?${q}`,{headers:SB_HDR});return r.json();}
 async function sbPost(t,d,opts=''){const r=await fetch(`${SB_URL}/rest/v1/${t}`,{method:'POST',headers:{...SB_HDR,'Prefer':opts||'return=representation'},body:JSON.stringify(d)});return r.json();}
 async function sbPatch(t,q,d){const r=await fetch(`${SB_URL}/rest/v1/${t}?${q}`,{method:'PATCH',headers:{...SB_HDR,'Prefer':'return=representation'},body:JSON.stringify(d)});return r.json();}
-async function sbUpsert(t,d){const r=await fetch(`${SB_URL}/rest/v1/${t}`,{method:'POST',headers:{...SB_HDR,'Prefer':'resolution=merge-duplicates,return=representation'},body:JSON.stringify(d)});return r.json();}
+async function salvarStatusMes(id, ms, dados){
+  // Tenta patch primeiro (atualizar existente)
+  const patch = await fetch(`${SB_URL}/rest/v1/pagamentos_mes?conta_id=eq.${id}&mes=eq.${ms}`,{
+    method:'PATCH',headers:{...SB_HDR,'Prefer':'return=representation'},
+    body:JSON.stringify(dados)
+  });
+  const patchData = await patch.json();
+  // Se não existia (array vazio), cria novo
+  if(Array.isArray(patchData)&&patchData.length===0){
+    await sbPost('pagamentos_mes',{conta_id:id,mes:ms,...dados});
+  }
+}
 
 const hoje=new Date();
 const DIA_HOJE=hoje.getDate();
@@ -638,7 +649,7 @@ async function pagarConta(id){
   const ms=mesStr(mesAtual.y,mesAtual.m);
   const dataStr=`${DIA_HOJE.toString().padStart(2,'0')}/${String(mesAtual.m+1).padStart(2,'0')}/${mesAtual.y}`;
   statusMes[id]={...statusMes[id],pago:true,valorPago:v,data:dataStr,selecionado:false};
-  await sbUpsert('pagamentos_mes',{conta_id:id,mes:ms,pago:true,valor_pago:v,forma:statusMes[id].forma,data_pagamento:dataStr});
+  await salvarStatusMes(id, ms, {pago:true, valor_pago:v, forma:statusMes[id].forma, data_pagamento:dataStr});
   // Abater do saldo correto
   const contaSaldo = c.tipo==='empresa'?'llg':'pessoal';
   await abaterSaldo(contaSaldo, v);
@@ -655,7 +666,7 @@ async function desfazerPagamento(id){
   const v=statusMes[id]?.valorPago||0;
   const c=contas.find(x=>x.id===id);
   statusMes[id]={...statusMes[id],pago:false,selecionado:false};
-  await sbUpsert('pagamentos_mes',{conta_id:id,mes:ms,pago:false,valor_pago:statusMes[id].valorPago,forma:statusMes[id].forma});
+  await salvarStatusMes(id, ms, {pago:false, valor_pago:statusMes[id].valorPago, forma:statusMes[id].forma});
   // Repor saldo
   const contaSaldo = c.tipo==='empresa'?'llg':'pessoal';
   await reporSaldo(contaSaldo, v);
@@ -1240,13 +1251,13 @@ function atualizarPillsSaldo(){
 
 async function abaterSaldo(conta, valor){
   saldos[conta] = Math.max(0, (saldos[conta]||0) - valor);
-  await sbUpsert('saldos',{id:conta, valor:saldos[conta]});
+  await fetch(`${SB_URL}/rest/v1/saldos?id=eq.${conta}`,{method:'PATCH',headers:{...SB_HDR,'Prefer':'return=representation'},body:JSON.stringify({valor:saldos[conta],updated_at:new Date().toISOString()})});
   atualizarPillsSaldo();
 }
 
 async function reporSaldo(conta, valor){
   saldos[conta] = (saldos[conta]||0) + valor;
-  await sbUpsert('saldos',{id:conta, valor:saldos[conta]});
+  await fetch(`${SB_URL}/rest/v1/saldos?id=eq.${conta}`,{method:'PATCH',headers:{...SB_HDR,'Prefer':'return=representation'},body:JSON.stringify({valor:saldos[conta],updated_at:new Date().toISOString()})});
   atualizarPillsSaldo();
 }
 
@@ -1255,7 +1266,7 @@ async function ajustarSaldo(conta){
   const novo = prompt(`Saldo atual: ${fmtV(atual)}\nNovo saldo:`, atual.toFixed(2));
   if(novo===null||isNaN(parseFloat(novo)))return;
   saldos[conta] = parseFloat(novo);
-  await sbUpsert('saldos',{id:conta, valor:saldos[conta]});
+  await fetch(`${SB_URL}/rest/v1/saldos?id=eq.${conta}`,{method:'PATCH',headers:{...SB_HDR,'Prefer':'return=representation'},body:JSON.stringify({valor:saldos[conta],updated_at:new Date().toISOString()})});
   atualizarPillsSaldo();
   toast('Saldo atualizado!');
 }
