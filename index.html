@@ -233,6 +233,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <button class="tb on" onclick="showTab('contas',this)">Contas</button>
     <button class="tb" onclick="showTab('retirada',this)">Retirada</button>
     <button class="tb" onclick="showTab('relatorio',this)">Relatório</button>
+    <button class="tb" onclick="showTab('graficos',this)">Gráficos</button>
     <button class="tb" onclick="showTab('chat',this)">Chat IA</button>
     <button class="tb" onclick="showTab('painel',this)">Painel</button>
     <button class="tb" onclick="toggleGastoRapido()" style="color:var(--blue);font-size:18px;flex:0;padding:8px 14px">+</button>
@@ -313,6 +314,28 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <div id="relGastos"><div class="loading">Carregando...</div></div>
       <div style="margin-top:12px">
         <button onclick="gerarJSON()" style="width:100%;padding:10px;background:var(--blue-l);border:1px solid var(--blue-m);border-radius:var(--rs);color:var(--blue);font-size:13px;font-weight:500;cursor:pointer;font-family:inherit">Gerar JSON para agente Excel ↗</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- GRAFICOS -->
+  <div id="pnl-graficos" class="pnl">
+    <div class="scr">
+      <div class="sh" style="margin-top:0">Lucro líquido mensal — Empresa</div>
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px;margin-bottom:12px">
+        <canvas id="chartLucro" height="180"></canvas>
+      </div>
+      <div class="sh">Receita vs Custos vs Impostos</div>
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px;margin-bottom:12px">
+        <canvas id="chartReceita" height="180"></canvas>
+      </div>
+      <div class="sh">Gastos pessoais por categoria — Abril</div>
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px;margin-bottom:12px">
+        <canvas id="chartCategorias" height="220"></canvas>
+      </div>
+      <div class="sh">Saldo acumulado</div>
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px;margin-bottom:12px">
+        <canvas id="chartSaldo" height="180"></canvas>
       </div>
     </div>
   </div>
@@ -1397,6 +1420,7 @@ function showTab(id,btn){
   if(id==='relatorio')carregarRelatorio();
   if(id==='retirada')atualizarRetirada();
   if(id==='painel')carregarPainel();
+  if(id==='graficos')carregarGraficos();
 }
 
 // NOTIFICAÇÕES DE CONTAS VENCENDO
@@ -1526,6 +1550,120 @@ async function ajustarSaldo(conta){
   atualizarPillsSaldo();
   toast('Saldo atualizado!');
 }
+// GRÁFICOS
+let chartsInstances = {};
+
+async function carregarGraficos(){
+  dadosFinanceiros = {};
+  const meses = ['2026-01','2026-02','2026-03','2026-04'];
+  const labels = ['Jan/26','Fev/26','Mar/26','Abr/26'];
+  const dados = await Promise.all(meses.map(m => calcularMes(m)));
+
+  const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const textColor = isDark ? '#8b93a8' : '#5a6278';
+  const gridColor = isDark ? '#2a3348' : '#e0e3e8';
+
+  Object.values(chartsInstances).forEach(c => c.destroy());
+  chartsInstances = {};
+
+  // 1. Lucro líquido
+  chartsInstances.lucro = new Chart(document.getElementById('chartLucro'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Lucro Líquido',
+        data: dados.map(d => Math.round(d.lucro)),
+        backgroundColor: dados.map(d => d.lucro >= 0 ? '#3B6D11' : '#A32D2D'),
+        borderRadius: 6
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: textColor }, grid: { color: gridColor } },
+        y: { ticks: { color: textColor, callback: v => 'R$'+Number(v).toLocaleString('pt-BR') }, grid: { color: gridColor } }
+      }
+    }
+  });
+
+  // 2. Receita vs Custos vs Impostos
+  chartsInstances.receita = new Chart(document.getElementById('chartReceita'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Receita', data: dados.map(d => Math.round(d.receita)), backgroundColor: '#185FA5', borderRadius: 4 },
+        { label: 'Custos', data: dados.map(d => Math.round(d.cf + d.cv)), backgroundColor: '#BA7517', borderRadius: 4 },
+        { label: 'Impostos', data: dados.map(d => Math.round(d.impostos)), backgroundColor: '#A32D2D', borderRadius: 4 }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      plugins: { legend: { labels: { color: textColor, boxWidth: 12 } } },
+      scales: {
+        x: { ticks: { color: textColor }, grid: { color: gridColor } },
+        y: { ticks: { color: textColor, callback: v => 'R$'+Number(v).toLocaleString('pt-BR') }, grid: { color: gridColor } }
+      }
+    }
+  });
+
+  // 3. Gastos pessoais por categoria (mês atual)
+  const mesAtualNome = `${MESES_PT[mesAtual.m]} ${mesAtual.y}`;
+  const gastosAbrRaw = await sbGet('gastos', `select=*&mes=eq.${encodeURIComponent(mesAtualNome)}&conta=eq.pessoal`);
+  const porCat = {};
+  if(Array.isArray(gastosAbrRaw)){
+    gastosAbrRaw.forEach(g => {
+      const cat = g.categoria || 'Outros';
+      porCat[cat] = (porCat[cat] || 0) + g.valor;
+    });
+  }
+  const catLabels = Object.keys(porCat).sort((a,b) => porCat[b]-porCat[a]);
+  const catVals = catLabels.map(k => Math.round(porCat[k]));
+  const catColors = ['#185FA5','#3B6D11','#BA7517','#A32D2D','#3C3489','#0F6E56','#854F0B','#5a6278','#378ADD','#97C459'];
+  chartsInstances.cat = new Chart(document.getElementById('chartCategorias'), {
+    type: 'doughnut',
+    data: {
+      labels: catLabels,
+      datasets: [{ data: catVals, backgroundColor: catColors.slice(0, catLabels.length), borderWidth: 2 }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      plugins: {
+        legend: { position: 'bottom', labels: { color: textColor, boxWidth: 12, padding: 8 } },
+        tooltip: { callbacks: { label: ctx => `${ctx.label}: ${fmtV(ctx.parsed)}` } }
+      }
+    }
+  });
+
+  // 4. Lucro acumulado 2026
+  let acum = 0;
+  const acumData = dados.map(d => { acum += d.lucro; return Math.round(acum); });
+  chartsInstances.saldo = new Chart(document.getElementById('chartSaldo'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Lucro acumulado 2026',
+        data: acumData,
+        borderColor: '#185FA5',
+        backgroundColor: 'rgba(24,95,165,0.1)',
+        fill: true, tension: 0.4,
+        pointBackgroundColor: '#185FA5', pointRadius: 5
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      plugins: { legend: { labels: { color: textColor } } },
+      scales: {
+        x: { ticks: { color: textColor }, grid: { color: gridColor } },
+        y: { ticks: { color: textColor, callback: v => 'R$'+Number(v).toLocaleString('pt-BR') }, grid: { color: gridColor } }
+      }
+    }
+  });
+}
+
 (async()=>{
   dadosFinanceiros={};
   await carregarSaldos();
@@ -1536,5 +1674,6 @@ async function ajustarSaldo(conta){
   document.getElementById('mesLabelRet').textContent=mesLabel(mesRet.y,mesRet.m);
 })();
 </script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </body>
 </html>
