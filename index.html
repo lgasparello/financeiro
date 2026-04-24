@@ -692,45 +692,48 @@ let dadosFinanceiros = {}; // cache por mes
 
 async function calcularMes(ms){
   if(dadosFinanceiros[ms]) return dadosFinanceiros[ms];
-  const [recsRaw, impsRaw, pagsRaw, gastosRaw, compRaw] = await Promise.all([
+  const mesNome = `${MESES_PT[parseInt(ms.split('-')[1])-1]} ${ms.split('-')[0]}`;
+  const [recsRaw, impsRaw, pagsRaw, gastosRaw] = await Promise.all([
     sbGet('receitas', `select=*&mes=eq.${ms}`),
     sbGet('impostos', `select=*&mes=eq.${ms}`),
     sbGet('pagamentos_mes', `select=*&mes=eq.${ms}&pago=eq.true`),
-    sbGet('gastos', `select=*&mes=eq.${MESES_PT[parseInt(ms.split('-')[1])-1]} ${ms.split('-')[0]}`),
-    sbGet('componentes_retirada', 'select=*&ativo=eq.true')
+    sbGet('gastos', `select=*&mes=eq.${encodeURIComponent(mesNome)}`)
   ]);
   const receitas = Array.isArray(recsRaw) ? recsRaw : [];
   const impostos = Array.isArray(impsRaw) ? impsRaw : [];
   const pagamentos = Array.isArray(pagsRaw) ? pagsRaw : [];
   const gastos = Array.isArray(gastosRaw) ? gastosRaw : [];
-  const componentes = Array.isArray(compRaw) ? compRaw : [];
 
   const totalReceita = receitas.reduce((s,r)=>s+r.valor,0);
   const totalImpostos = impostos.reduce((s,i)=>s+i.valor,0);
 
-  // Custos fixos empresa pagos
+  // Custos fixos = todos pagamentos confirmados do mês (empresa + pessoal via empresa)
   const cfEmpresa = pagamentos
     .filter(p=>{ const c=contas.find(x=>x.id===p.conta_id); return c&&c.tipo==='empresa'; })
     .reduce((s,p)=>{ const c=contas.find(x=>x.id===p.conta_id); return s+(p.valor_pago||c?.valor||0); },0);
 
-  // Gastos variáveis empresa
+  // Retiradas confirmadas (pro labore + plano + moto — são custos da empresa)
+  const retiradasRaw = await sbGet('retiradas', `select=*&mes=eq.${ms}&enviado=eq.true`);
+  const retiradas = Array.isArray(retiradasRaw) ? retiradasRaw : [];
+  const totalRetirado = retiradas.reduce((s,r)=>s+r.valor,0);
+  // Fixos via retirada (excluindo lucros)
+  const cfViaRetirada = retiradas
+    .filter(r=>r.componente!=='lucros')
+    .reduce((s,r)=>s+r.valor,0);
+
+  // Gastos variáveis empresa (lançados no chat/gasto rápido)
   const cvEmpresa = gastos
     .filter(g=>g.conta==='empresa')
     .reduce((s,g)=>s+g.valor,0);
 
-  const lucroLiq = totalReceita - cfEmpresa - cvEmpresa - totalImpostos;
-
-  // Retiradas do mês
-  const retiradasRaw = await sbGet('retiradas', `select=*&mes=eq.${ms}&enviado=eq.true`);
-  const retiradas = Array.isArray(retiradasRaw) ? retiradasRaw : [];
-  const totalRetirado = retiradas.reduce((s,r)=>s+r.valor,0);
+  const cfTotal = cfEmpresa + cfViaRetirada;
+  const lucroLiq = totalReceita - cfTotal - cvEmpresa - totalImpostos;
 
   const result = {
     receita: totalReceita, impostos: totalImpostos,
-    cf: cfEmpresa, cv: cvEmpresa,
+    cf: cfTotal, cv: cvEmpresa,
     lucro: lucroLiq, retirado: totalRetirado,
-    receitaItens: receitas, impostosItens: impostos,
-    componentes
+    receitaItens: receitas, impostosItens: impostos
   };
   dadosFinanceiros[ms] = result;
   return result;
