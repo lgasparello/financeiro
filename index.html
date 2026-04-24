@@ -724,29 +724,25 @@ async function calcularMes(ms){
   const totalImpostos = impostos.reduce((s,i)=>s+i.valor,0);
   const totalRetirado = retiradas.reduce((s,r)=>s+r.valor,0);
 
-  // CF empresa (contas tipo='empresa' pagas)
+  // CF = apenas contas fixas tipo empresa pagas (operacional)
   const cfEmpresa = pagamentos
     .filter(p=>{ const c=contas.find(x=>x.id===p.conta_id); return c&&c.tipo==='empresa'; })
     .reduce((s,p)=>{ const c=contas.find(x=>x.id===p.conta_id); return s+(p.valor_pago||c?.valor||0); },0);
 
-  // CF via retiradas fixas (pro labore, plano, moto)
-  const cfRetiradas = retiradas
-    .filter(r=>r.componente!=='lucros')
-    .reduce((s,r)=>s+r.valor,0);
-
-  // CV empresa
+  // CV = gastos variáveis empresa
   const cvEmpresa = gastos
     .filter(g=>g.conta==='empresa')
     .reduce((s,g)=>s+g.valor,0);
 
-  const cfTotal = cfEmpresa + cfRetiradas;
-  const lucroLiq = totalReceita - cfTotal - cvEmpresa - totalImpostos;
+  // Lucro = Receita - CF operacional - CV - Impostos
+  // Retiradas NÃO entram no cálculo do lucro
+  const lucroLiq = totalReceita - cfEmpresa - cvEmpresa - totalImpostos;
 
-  console.log(`[${ms}] Receita:${totalReceita} CF:${cfEmpresa} CFRet:${cfRetiradas} CV:${cvEmpresa} Imp:${totalImpostos} Lucro:${lucroLiq} Retiradas:${retiradas.length}`);
+  console.log(`[${ms}] Receita:${totalReceita} CF:${cfEmpresa} CV:${cvEmpresa} Imp:${totalImpostos} Lucro:${lucroLiq}`);
 
   const result = {
     receita: totalReceita, impostos: totalImpostos,
-    cf: cfTotal, cv: cvEmpresa,
+    cf: cfEmpresa, cv: cvEmpresa,
     lucro: lucroLiq, retirado: totalRetirado,
     receitaItens: receitas, impostosItens: impostos
   };
@@ -852,12 +848,13 @@ async function atualizarRetirada(){
   if(Array.isArray(data)){
     data.forEach(r=>{retiradaMes[r.componente]={valor:r.valor,enviado:r.enviado,data:r.data_envio,id:r.id};});
   }
-  // Lucro anterior dinâmico
-  const lucroAnt = await getLucroAnterior(mesRet.y, mesRet.m);
-  renderRetirada(lucroAnt);
+  // Lucro anterior dinâmico — mínimo R$0
+  const lucroAntRaw = await getLucroAnterior(mesRet.y, mesRet.m);
+  const lucroAnt = Math.max(0, lucroAntRaw);
+  renderRetirada(lucroAnt, lucroAntRaw);
 }
 
-function renderRetirada(lucroAnt=0){
+function renderRetirada(lucroAnt=0, lucroAntRaw=0){
   const ms=mesStr(mesRet.y,mesRet.m);
   const mAnterior=new Date(mesRet.y,mesRet.m-1);
 
@@ -868,9 +865,16 @@ function renderRetirada(lucroAnt=0){
   const lucrosEnv=retiradaMes['lucros']?.enviado?retiradaMes['lucros'].valor:0;
   const totalEnv=fixosEnviados+lucrosEnv;
   const lucrosPrev=retiradaMes['lucros']?.valor||0;
-  const excessoLucros=lucrosPrev>lucroAnt&&lucroAnt>0;
+  const excessoLucros=lucrosPrev>lucroAnt&&lucroAnt>=0;
 
   let html='';
+
+  // Aviso se mês anterior foi negativo
+  if(lucroAntRaw<0){
+    html+=`<div style="background:var(--red-l);border:1px solid var(--red-m);border-radius:var(--rs);padding:8px 12px;margin-bottom:10px;font-size:12px;color:var(--red)">
+      ⚠ ${MESES_PT[mAnterior.getMonth()]} teve prejuízo de ${fmtV(Math.abs(lucroAntRaw))}. Limite de lucros = R$0,00.
+    </div>`;
+  }
 
   // Resumo em 3 cards
   html+=`<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px">
