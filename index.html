@@ -1027,51 +1027,65 @@ function renderGastos(){
 }
 
 // CHAT IA
-const SYS_BASE=`Você é o assistente financeiro pessoal de Lucas Gasparello, dono da LLG Consultoria.
+const SYS_BASE=`Você é o assistente financeiro completo de Lucas Gasparello, dono da LLG Consultoria.
 Data atual: ${hoje.toLocaleDateString('pt-BR')}.
-Saldo LLG: R$15.355 | Saldo pessoal: R$311.
+Saldo LLG: R$14.705,33 | Saldo pessoal: R$419,84.
 
-CONTAS FIXAS ATIVAS:
-- Pensão Isabella → Alessandra T. Onofri: R$1.621/mês, dia 3
-- Plano Saúde Isabella → Alessandra T. Onofri: R$349,98/mês, dia 3
-- Pensão Kauã → Gabrielle A. C. Pinto: R$350/mês, dia 3
-- Mesada Kauã → Kauã Gasparello: R$100/mês, dia 21
-- Passeio Kauã → Joseir Gasparello: R$390/mês, dia 5 (até Jun/26)
-- Moto → Joseir Gasparello: R$2.410,92/mês, dia 5 (até Jun/26, 2 parcelas restam)
-- Insta360 → Joseir Gasparello: R$286,21/mês, dia 5 (até Set/26, 5 parcelas restam)
-- Plano Saúde Lucas → Joseir Gasparello: R$478,75/mês, dia 5
-- Despesas de Casa → Daniele Teotonio: R$1.000/mês, dia 5
-- Consórcio → SERVOPA: R$278,70/mês, dia 16
-- Seguro Carro → BRAD AUTO: R$196,72/mês, dia 16
-- Vaga do Carro → Katia Regina V. Lerer: R$200/mês, dia 27
-- Contadora → Camila Cristiane Domingues: R$350/mês, dia 7 (LLG)
-- Plano Saúde Empresa → Operadora: R$478,75/mês, dia 5 (LLG)
-- Estacionamento LLG → Estacionamento: R$150/mês, dia 18 (LLG)
+CONTAS FIXAS ATIVAS (IDs para referência):
+1: Pensão Isabella → Alessandra T. Onofri: R$1.621/mês, dia 3, pessoal
+2: Plano Saúde Isabella → Alessandra T. Onofri: R$349,98/mês, dia 3, pessoal
+3: Pensão Kauã → Gabrielle A. C. Pinto: R$350/mês, dia 3, pessoal
+4: Mesada Kauã → Kauã Gasparello: R$100/mês, dia 20, pessoal
+5: Passeio Kauã → Joseir Gasparello: R$390/mês, dia 5, pessoal (até Jun/26)
+6: Despesas de Casa → Daniele Teotonio: R$1.000/mês, dia 5, pessoal
+7: Consórcio → SERVOPA: R$278,70/mês, dia 16, pessoal
+8: Seguro Carro → Seguro Carro: R$196,72/mês, dia 16, pessoal, cartão
+9: Seguro Moto → Seguro Moto: R$136,54/mês, dia 10, pessoal (encerrou abr/26)
+10: Vaga do Carro → Katia Regina V. Lerer: R$200/mês, dia 25, pessoal
+11: Moto → Joseir Gasparello: R$2.410,92/mês, dia 5, pessoal (até Jun/26)
+12: Insta360 → Joseir Gasparello: R$286,21/mês, dia 5, pessoal (até Set/26)
+13: Plano Saúde Lucas → Plano de Saúde Lucas: R$478,75/mês, dia 5, pessoal
+14: Contadora → Camila Cristiane Domingues: R$350/mês, dia 7, empresa
+15: Plano Saúde Empresa → Plano de Saúde: R$478,75/mês, dia 5, empresa
+16: Estacionamento LLG → Estacionamento: R$150/mês, dia 18, empresa
+17: Claude IA → Anthropic PBC: R$579,64/mês, dia 23, empresa
 
 PARCELAMENTOS:
-- Moto: termina Jun/26, faltam 2 parcelas, R$2.410,92/mês
-- Insta360: termina Set/26, faltam 5 parcelas, R$286,21/mês
+- Moto (id 11): termina Jun/26, 2 parcelas restam
+- Insta360 (id 12): termina Set/26, 5 parcelas restam
 - Transplante capilar: R$2.500 pago jan/26, R$13.668 previsto Jun/26
 
-RETIRADA LLG (componentes):
-- Pro Labore: R$1.621 (fixo)
-- Plano de Saúde: R$478,75 (fixo)
-- Moto: R$2.410,92 (até Jun/26)
-- Lucros: variável (limitado ao lucro do mês anterior)
-- Lucros por mês: Jan R$7.810, Fev -R$2.857, Mar R$4.466, Abr R$4.641
+RETIRADA LLG: Pro Labore R$1.621 + Plano R$478,75 + Moto R$2.410,92 (até jun/26) + Lucros variável
+Lucros: Jan R$7.810 | Fev -R$2.857 | Mar R$4.466 | Abr R$4.641
 
-REGRAS:
-- Retirada limitada ao lucro líquido do mês anterior
-- Resgates CDB não são receita nova
-- Contas pagas pelo chat ou pela tela de Contas ficam salvas no banco
+AÇÕES DISPONÍVEIS — responda SOMENTE o JSON correspondente, sem markdown:
 
-QUANDO REGISTRAR GASTO (Lucas descrever uma compra/pagamento), responda SOMENTE JSON sem markdown:
-{"a":"reg","desc":"nome curto","valor":0.00,"conta":"empresa|pessoal","mes":"Abril","cat":"Custo Variável|Custo Fixo|Imposto|Retirada|Receita","cc":"cv|cf|im|rc","msg":"confirmação"}
+1. REGISTRAR GASTO:
+{"a":"reg","desc":"nome","valor":0.00,"conta":"empresa|pessoal","mes":"Abril","cat":"Custo Variável|Custo Fixo|Imposto|Retirada|Receita","cc":"cv|cf|im|rc","forma":"deb|crt","msg":"confirmação"}
 
-QUANDO ADICIONAR CONTA RECORRENTE (Lucas pedir para incluir despesa fixa mensal), responda SOMENTE JSON:
-{"a":"add_recorrente","desc":"nome da conta","beneficiario":"nome do credor","valor":0.00,"conta":"empresa|pessoal","dia":5,"cat":"Custo Fixo","msg":"confirmação"}
+2. ADICIONAR CONTA RECORRENTE:
+{"a":"add_recorrente","desc":"nome","beneficiario":"credor","valor":0.00,"conta":"empresa|pessoal","dia":5,"msg":"confirmação"}
 
-PARA PERGUNTAS: responda diretamente, máximo 4 linhas, seja objetivo.`;
+3. EDITAR CONTA EXISTENTE (mudar valor, dia, beneficiário):
+{"a":"edit_conta","id":0,"campo":"valor|dia_vencimento|beneficiario|nome","valor_novo":"novo valor","msg":"confirmação"}
+
+4. DESATIVAR CONTA (encerrar pagamento):
+{"a":"desativar_conta","id":0,"msg":"confirmação"}
+
+5. MARCAR CONTA COMO PAGA:
+{"a":"pagar_conta","id":0,"valor":0.00,"forma":"pes|llg|crt","msg":"confirmação"}
+
+6. DESFAZER PAGAMENTO DE CONTA:
+{"a":"desfazer_conta","id":0,"msg":"confirmação"}
+
+7. AJUSTAR SALDO:
+{"a":"ajustar_saldo","conta":"llg|pessoal","valor":0.00,"msg":"confirmação"}
+
+8. REGISTRAR RETIRADA LLG:
+{"a":"retirada","componente":"pro_labore|plano_saude|moto|lucros","valor":0.00,"data":"dd/mm/aaaa","msg":"confirmação"}
+
+PARA PERGUNTAS: responda diretamente, máximo 4 linhas, objetivo.`;
+
 
 let chatHistory = [];
 
@@ -1135,6 +1149,52 @@ async function sendMsg(){
       renderTodasContas();
       addMsg(`✅ <b>${parsed.desc}</b> adicionada!<br>${fmtV(parsed.valor)}/mês · dia ${parsed.dia} · ${parsed.conta==='empresa'?'LLG':'Pessoal'}`,'g');
       toast('Conta adicionada!');
+
+    } else if(parsed&&parsed.a==='edit_conta'){
+      await fetch(`${SB_URL}/rest/v1/contas_fixas?id=eq.${parsed.id}`,{method:'PATCH',headers:{...SB_HDR},body:JSON.stringify({[parsed.campo]:parsed.valor_novo})});
+      await carregarContas();await carregarStatusMes(mesStr(mesAtual.y,mesAtual.m));renderDias();renderTodasContas();
+      addMsg(`✅ ${parsed.msg}`,'g');toast('Conta atualizada!');
+
+    } else if(parsed&&parsed.a==='desativar_conta'){
+      await fetch(`${SB_URL}/rest/v1/contas_fixas?id=eq.${parsed.id}`,{method:'PATCH',headers:{...SB_HDR},body:JSON.stringify({ativo:false})});
+      await carregarContas();await carregarStatusMes(mesStr(mesAtual.y,mesAtual.m));renderDias();renderTodasContas();
+      addMsg(`✅ ${parsed.msg}`,'g');toast('Conta desativada!');
+
+    } else if(parsed&&parsed.a==='pagar_conta'){
+      const ms=mesStr(mesAtual.y,mesAtual.m);
+      const c=contas.find(x=>x.id===parsed.id);
+      if(!statusMes[parsed.id])statusMes[parsed.id]={pago:false,valorPago:parsed.valor,forma:parsed.forma||'pes',selecionado:false};
+      statusMes[parsed.id]={...statusMes[parsed.id],pago:true,valorPago:parsed.valor,forma:parsed.forma||'pes'};
+      await salvarStatusMes(parsed.id,ms,{pago:true,valor_pago:parsed.valor,forma:parsed.forma||'pes',data_pagamento:hoje.toLocaleDateString('pt-BR')});
+      if(parsed.forma!=='crt'&&c) await abaterSaldo(c.tipo==='empresa'?'llg':'pessoal',parsed.valor);
+      renderTodasContas();renderDias();
+      addMsg(`✅ ${parsed.msg}`,'g');toast('Conta paga!');
+
+    } else if(parsed&&parsed.a==='desfazer_conta'){
+      const ms=mesStr(mesAtual.y,mesAtual.m);
+      const c=contas.find(x=>x.id===parsed.id);
+      const v=statusMes[parsed.id]?.valorPago||0;
+      const forma=statusMes[parsed.id]?.forma||'pes';
+      if(statusMes[parsed.id])statusMes[parsed.id]={...statusMes[parsed.id],pago:false};
+      await salvarStatusMes(parsed.id,ms,{pago:false,valor_pago:v,forma});
+      if(forma!=='crt'&&c) await reporSaldo(c.tipo==='empresa'?'llg':'pessoal',v);
+      renderTodasContas();renderDias();
+      addMsg(`✅ ${parsed.msg}`,'g');toast('Desfeito!');
+
+    } else if(parsed&&parsed.a==='ajustar_saldo'){
+      saldos[parsed.conta]=parsed.valor;
+      await fetch(`${SB_URL}/rest/v1/saldos?id=eq.${parsed.conta}`,{method:'PATCH',headers:{...SB_HDR},body:JSON.stringify({valor:parsed.valor})});
+      atualizarPillsSaldo();
+      addMsg(`✅ ${parsed.msg}`,'g');toast('Saldo atualizado!');
+
+    } else if(parsed&&parsed.a==='retirada'){
+      const ms=mesStr(mesRet.y,mesRet.m);
+      await sbPost('retiradas',{componente:parsed.componente,mes:ms,valor:parsed.valor,enviado:true,data_envio:parsed.data||hoje.toLocaleDateString('pt-BR')},'resolution=merge-duplicates');
+      retiradaMes[parsed.componente]={valor:parsed.valor,enviado:true,data:parsed.data};
+      await abaterSaldo('llg',parsed.valor);
+      await reporSaldo('pessoal',parsed.valor);
+      addMsg(`✅ ${parsed.msg}`,'g');toast('Retirada registrada!');
+
     } else {
       addMsg(resp.replace(/\n/g,'<br>'),'a');
     }
