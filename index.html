@@ -650,9 +650,11 @@ async function pagarConta(id){
   const dataStr=`${DIA_HOJE.toString().padStart(2,'0')}/${String(mesAtual.m+1).padStart(2,'0')}/${mesAtual.y}`;
   statusMes[id]={...statusMes[id],pago:true,valorPago:v,data:dataStr,selecionado:false};
   await salvarStatusMes(id, ms, {pago:true, valor_pago:v, forma:statusMes[id].forma, data_pagamento:dataStr});
-  // Abater do saldo correto
-  const contaSaldo = c.tipo==='empresa'?'llg':'pessoal';
-  await abaterSaldo(contaSaldo, v);
+  // Só abate saldo se não for cartão
+  if(statusMes[id].forma !== 'crt'){
+    const contaSaldo = c.tipo==='empresa'?'llg':'pessoal';
+    await abaterSaldo(contaSaldo, v);
+  }
   renderTodasContas();renderDias();if(diaSel!==null)renderDiaInfo(diaSel);
   toast('Pagamento confirmado!');
 }
@@ -667,9 +669,11 @@ async function desfazerPagamento(id){
   const c=contas.find(x=>x.id===id);
   statusMes[id]={...statusMes[id],pago:false,selecionado:false};
   await salvarStatusMes(id, ms, {pago:false, valor_pago:statusMes[id].valorPago, forma:statusMes[id].forma});
-  // Repor saldo
-  const contaSaldo = c.tipo==='empresa'?'llg':'pessoal';
-  await reporSaldo(contaSaldo, v);
+  // Só repõe saldo se não foi cartão
+  if(statusMes[id].forma !== 'crt'){
+    const contaSaldo = c.tipo==='empresa'?'llg':'pessoal';
+    await reporSaldo(contaSaldo, v);
+  }
   renderTodasContas();renderDias();if(diaSel!==null)renderDiaInfo(diaSel);
   toast('Desfeito');
 }
