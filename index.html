@@ -320,6 +320,41 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 
   <!-- GRAFICOS -->
   <div id="pnl-graficos" class="pnl">
+    <div class="filtro-row" style="flex-wrap:wrap;gap:8px">
+      <select id="gfAno" onchange="carregarGraficos()" style="flex:1;padding:7px 10px;border-radius:var(--rs);border:1px solid var(--border2);background:var(--bg2);color:var(--text);font-size:13px;font-family:inherit">
+        <option value="2024">2024</option>
+        <option value="2025">2025</option>
+        <option value="2026" selected>2026</option>
+      </select>
+      <select id="gfMesIni" onchange="carregarGraficos()" style="flex:1;padding:7px 10px;border-radius:var(--rs);border:1px solid var(--border2);background:var(--bg2);color:var(--text);font-size:13px;font-family:inherit">
+        <option value="1" selected>Jan</option>
+        <option value="2">Fev</option>
+        <option value="3">Mar</option>
+        <option value="4">Abr</option>
+        <option value="5">Mai</option>
+        <option value="6">Jun</option>
+        <option value="7">Jul</option>
+        <option value="8">Ago</option>
+        <option value="9">Set</option>
+        <option value="10">Out</option>
+        <option value="11">Nov</option>
+        <option value="12">Dez</option>
+      </select>
+      <select id="gfMesFim" onchange="carregarGraficos()" style="flex:1;padding:7px 10px;border-radius:var(--rs);border:1px solid var(--border2);background:var(--bg2);color:var(--text);font-size:13px;font-family:inherit">
+        <option value="1">Jan</option>
+        <option value="2">Fev</option>
+        <option value="3">Mar</option>
+        <option value="4" selected>Abr</option>
+        <option value="5">Mai</option>
+        <option value="6">Jun</option>
+        <option value="7">Jul</option>
+        <option value="8">Ago</option>
+        <option value="9">Set</option>
+        <option value="10">Out</option>
+        <option value="11">Nov</option>
+        <option value="12">Dez</option>
+      </select>
+    </div>
     <div class="scr">
       <div class="sh" style="margin-top:0">Lucro líquido mensal — Empresa</div>
       <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px;margin-bottom:12px">
@@ -329,11 +364,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px;margin-bottom:12px">
         <canvas id="chartReceita" height="180"></canvas>
       </div>
-      <div class="sh">Gastos pessoais por categoria — Abril</div>
+      <div class="sh">Gastos pessoais por categoria</div>
       <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px;margin-bottom:12px">
         <canvas id="chartCategorias" height="220"></canvas>
       </div>
-      <div class="sh">Saldo acumulado</div>
+      <div class="sh">Lucro acumulado</div>
       <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px;margin-bottom:12px">
         <canvas id="chartSaldo" height="180"></canvas>
       </div>
@@ -1555,15 +1590,25 @@ let chartsInstances = {};
 
 async function carregarGraficos(){
   dadosFinanceiros = {};
-  const meses = ['2026-01','2026-02','2026-03','2026-04'];
-  const labels = ['Jan/26','Fev/26','Mar/26','Abr/26'];
+  const ano = parseInt(document.getElementById('gfAno')?.value || 2026);
+  const mesIni = parseInt(document.getElementById('gfMesIni')?.value || 1);
+  const mesFim = parseInt(document.getElementById('gfMesFim')?.value || 4);
+
+  // Gerar lista de meses no período
+  const meses = [];
+  const labels = [];
+  for(let m = mesIni; m <= mesFim; m++){
+    meses.push(`${ano}-${String(m).padStart(2,'0')}`);
+    labels.push(`${MESES_PT[m-1].slice(0,3)}/${String(ano).slice(2)}`);
+  }
+
   const dados = await Promise.all(meses.map(m => calcularMes(m)));
 
   const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
   const textColor = isDark ? '#8b93a8' : '#5a6278';
   const gridColor = isDark ? '#2a3348' : '#e0e3e8';
 
-  Object.values(chartsInstances).forEach(c => c.destroy());
+  Object.values(chartsInstances).forEach(c => { try{c.destroy();}catch(e){} });
   chartsInstances = {};
 
   // 1. Lucro líquido
@@ -1609,16 +1654,19 @@ async function carregarGraficos(){
     }
   });
 
-  // 3. Gastos pessoais por categoria (mês atual)
-  const mesAtualNome = `${MESES_PT[mesAtual.m]} ${mesAtual.y}`;
-  const gastosAbrRaw = await sbGet('gastos', `select=*&mes=eq.${encodeURIComponent(mesAtualNome)}&conta=eq.pessoal`);
+  // 3. Gastos pessoais por categoria (período selecionado)
+  const gastosPromises = meses.map(ms => {
+    const mesNome = `${MESES_PT[parseInt(ms.split('-')[1])-1]} ${ms.split('-')[0]}`;
+    return sbGet('gastos', `select=*&mes=eq.${encodeURIComponent(mesNome)}&conta=eq.pessoal`);
+  });
+  const gastosResultados = await Promise.all(gastosPromises);
   const porCat = {};
-  if(Array.isArray(gastosAbrRaw)){
-    gastosAbrRaw.forEach(g => {
+  gastosResultados.forEach(raw => {
+    if(Array.isArray(raw)) raw.forEach(g => {
       const cat = g.categoria || 'Outros';
       porCat[cat] = (porCat[cat] || 0) + g.valor;
     });
-  }
+  });
   const catLabels = Object.keys(porCat).sort((a,b) => porCat[b]-porCat[a]);
   const catVals = catLabels.map(k => Math.round(porCat[k]));
   const catColors = ['#185FA5','#3B6D11','#BA7517','#A32D2D','#3C3489','#0F6E56','#854F0B','#5a6278','#378ADD','#97C459'];
