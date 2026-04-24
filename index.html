@@ -361,29 +361,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <!-- PAINEL -->
   <div id="pnl-painel" class="pnl">
     <div class="scr">
-      <div class="sh" style="margin-top:0">Saldos reais — <span id="painelData">22/04/2026</span></div>
+      <div class="sh" style="margin-top:0">Saldos reais — <span id="painelData">carregando...</span></div>
       <div class="grid2">
-        <div class="mc"><div class="mc-lbl">Saldo LLG</div><div class="mc-val" style="color:var(--blue)" id="painelLLG">R$14.705</div><div class="mc-sub">Conta 344641813</div></div>
-        <div class="mc"><div class="mc-lbl">Saldo pessoal</div><div class="mc-val" style="color:var(--green)" id="painelPes">R$419</div><div class="mc-sub">Conta 179966227</div></div>
+        <div class="mc"><div class="mc-lbl">Saldo LLG</div><div class="mc-val" style="color:var(--blue)" id="painelLLG">...</div><div class="mc-sub">Conta 344641813</div></div>
+        <div class="mc"><div class="mc-lbl">Saldo pessoal</div><div class="mc-val" style="color:var(--green)" id="painelPes">...</div><div class="mc-sub">Conta 179966227</div></div>
       </div>
-      <div class="sh">Abril — empresa</div>
-      <div class="grid2">
-        <div class="mc"><div class="mc-lbl">Receita</div><div class="mc-val" style="color:var(--blue)">R$20.000</div><div class="mc-sub">Global Service</div></div>
-        <div class="mc"><div class="mc-lbl">Lucro líquido</div><div class="mc-val" style="color:var(--green)">R$4.641</div></div>
-        <div class="mc"><div class="mc-lbl">Custo fixo</div><div class="mc-val" style="color:var(--amber)">R$10.110</div></div>
-        <div class="mc"><div class="mc-lbl">Impostos</div><div class="mc-val" style="color:var(--red)">R$3.100</div><div class="mc-sub">Pago 20/04</div></div>
-      </div>
-      <div class="sh">Abril — pessoal</div>
-      <div class="grid2">
-        <div class="mc"><div class="mc-lbl">Receita</div><div class="mc-val" style="color:var(--blue)">R$12.664</div></div>
-        <div class="mc"><div class="mc-lbl">Custos parciais</div><div class="mc-val" style="color:var(--amber)">R$9.850</div></div>
-        <div class="mc full"><div class="mc-lbl">Saldo estimado</div><div class="mc-val" style="color:var(--green)">R$2.814</div><div class="mc-sub">Mês ainda aberto</div></div>
-      </div>
-      <div class="sh">Acumulado 2026</div>
-      <div class="grid2">
-        <div class="mc"><div class="mc-lbl">Lucro empresa</div><div class="mc-val" style="color:var(--green)">R$21.960</div></div>
-        <div class="mc"><div class="mc-lbl">Saldo pessoal acum.</div><div class="mc-val" style="color:var(--blue)">R$13.457</div></div>
-      </div>
+      <div id="painelMesEmpresa"></div>
+      <div id="painelMesPessoal"></div>
+      <div id="painelAcumulado"></div>
     </div>
   </div>
 </div>
@@ -702,18 +687,126 @@ function renderTotalBar(){
   document.getElementById('totalPorPessoa').innerHTML=pph;
 }
 
-// RETIRADA LLG
-const COMPONENTES_RET=[
-  {id:'pro_labore',nome:'Pro Labore',valor:1621.00,fixo:true},
-  {id:'plano_saude',nome:'Plano de Saúde',valor:478.75,fixo:true},
-  {id:'moto',nome:'Moto (até Jun/26)',valor:2410.92,fixo:true,fim:'2026-06'},
-  {id:'lucros',nome:'Lucros',valor:0,fixo:false},
-];
+// DADOS FINANCEIROS DINAMICOS
+let dadosFinanceiros = {}; // cache por mes
 
-const LUCROS_POR_MES={
-  '2026-01':7810,'2026-02':-2857,'2026-03':4466,'2026-04':4641
-};
+async function calcularMes(ms){
+  if(dadosFinanceiros[ms]) return dadosFinanceiros[ms];
+  const [recsRaw, impsRaw, pagsRaw, gastosRaw, compRaw] = await Promise.all([
+    sbGet('receitas', `select=*&mes=eq.${ms}`),
+    sbGet('impostos', `select=*&mes=eq.${ms}`),
+    sbGet('pagamentos_mes', `select=*&mes=eq.${ms}&pago=eq.true`),
+    sbGet('gastos', `select=*&mes=eq.${MESES_PT[parseInt(ms.split('-')[1])-1]} ${ms.split('-')[0]}`),
+    sbGet('componentes_retirada', 'select=*&ativo=eq.true')
+  ]);
+  const receitas = Array.isArray(recsRaw) ? recsRaw : [];
+  const impostos = Array.isArray(impsRaw) ? impsRaw : [];
+  const pagamentos = Array.isArray(pagsRaw) ? pagsRaw : [];
+  const gastos = Array.isArray(gastosRaw) ? gastosRaw : [];
+  const componentes = Array.isArray(compRaw) ? compRaw : [];
 
+  const totalReceita = receitas.reduce((s,r)=>s+r.valor,0);
+  const totalImpostos = impostos.reduce((s,i)=>s+i.valor,0);
+
+  // Custos fixos empresa pagos
+  const cfEmpresa = pagamentos
+    .filter(p=>{ const c=contas.find(x=>x.id===p.conta_id); return c&&c.tipo==='empresa'; })
+    .reduce((s,p)=>{ const c=contas.find(x=>x.id===p.conta_id); return s+(p.valor_pago||c?.valor||0); },0);
+
+  // Gastos variáveis empresa
+  const cvEmpresa = gastos
+    .filter(g=>g.conta==='empresa')
+    .reduce((s,g)=>s+g.valor,0);
+
+  const lucroLiq = totalReceita - cfEmpresa - cvEmpresa - totalImpostos;
+
+  // Retiradas do mês
+  const retiradasRaw = await sbGet('retiradas', `select=*&mes=eq.${ms}&enviado=eq.true`);
+  const retiradas = Array.isArray(retiradasRaw) ? retiradasRaw : [];
+  const totalRetirado = retiradas.reduce((s,r)=>s+r.valor,0);
+
+  const result = {
+    receita: totalReceita, impostos: totalImpostos,
+    cf: cfEmpresa, cv: cvEmpresa,
+    lucro: lucroLiq, retirado: totalRetirado,
+    receitaItens: receitas, impostosItens: impostos,
+    componentes
+  };
+  dadosFinanceiros[ms] = result;
+  return result;
+}
+
+async function carregarPainel(){
+  const ms = mesStr(mesAtual.y, mesAtual.m);
+  const mAnterior = new Date(mesAtual.y, mesAtual.m-1);
+  const msAnt = mesStr(mAnterior.getFullYear(), mAnterior.getMonth());
+
+  const [dadosMes, dadosAnt] = await Promise.all([
+    calcularMes(ms),
+    calcularMes(msAnt)
+  ]);
+
+  // Acumulado 2026
+  const meses2026 = ['2026-01','2026-02','2026-03','2026-04'];
+  let lucroAcum = 0;
+  for(const m of meses2026){
+    const d = await calcularMes(m);
+    lucroAcum += d.lucro;
+  }
+
+  // Custos pessoais do mês
+  const pagsPes = await sbGet('pagamentos_mes', `select=*&mes=eq.${ms}&pago=eq.true`);
+  const totalPes = Array.isArray(pagsPes)
+    ? pagsPes.filter(p=>{const c=contas.find(x=>x.id===p.conta_id);return c&&c.tipo==='pessoal';})
+             .reduce((s,p)=>{const c=contas.find(x=>x.id===p.conta_id);return s+(p.valor_pago||c?.valor||0);},0)
+    : 0;
+
+  // Receita pessoal = retiradas do mês
+  const retiradasPes = await sbGet('retiradas', `select=*&mes=eq.${ms}&enviado=eq.true`);
+  const totalRetPes = Array.isArray(retiradasPes) ? retiradasPes.reduce((s,r)=>s+r.valor,0) : 0;
+
+  const labelMes = mesLabel(mesAtual.y, mesAtual.m);
+  const limiteRetirada = dadosAnt.lucro;
+
+  document.getElementById('painelMesEmpresa').innerHTML=`
+    <div class="sh">${labelMes} — empresa</div>
+    <div class="grid2">
+      <div class="mc"><div class="mc-lbl">Receita</div><div class="mc-val" style="color:var(--blue)">${fmtV(dadosMes.receita)}</div><div class="mc-sub">${dadosMes.receitaItens.map(r=>r.cliente).join(', ')||'—'}</div></div>
+      <div class="mc"><div class="mc-lbl">Lucro líquido</div><div class="mc-val" style="color:${dadosMes.lucro>=0?'var(--green)':'var(--red)'}">${fmtV(dadosMes.lucro)}</div></div>
+      <div class="mc"><div class="mc-lbl">Custo fixo</div><div class="mc-val" style="color:var(--amber)">${fmtV(dadosMes.cf)}</div></div>
+      <div class="mc"><div class="mc-lbl">Custo variável</div><div class="mc-val" style="color:var(--amber)">${fmtV(dadosMes.cv)}</div></div>
+      <div class="mc"><div class="mc-lbl">Impostos</div><div class="mc-val" style="color:var(--red)">${fmtV(dadosMes.impostos)}</div></div>
+      <div class="mc"><div class="mc-lbl">Total retirado</div><div class="mc-val" style="color:var(--purple)">${fmtV(dadosMes.retirado)}</div></div>
+      <div class="mc full" style="background:var(--${limiteRetirada>0?'amber':'red'}-l);border-color:var(--${limiteRetirada>0?'amber':'red'}-m)">
+        <div class="mc-lbl" style="color:var(--${limiteRetirada>0?'amber':'red'})">Limite retirada lucros (mês anterior)</div>
+        <div class="mc-val" style="color:var(--${limiteRetirada>0?'amber':'red'})">${fmtV(limiteRetirada)}</div>
+      </div>
+    </div>`;
+
+  document.getElementById('painelMesPessoal').innerHTML=`
+    <div class="sh">${labelMes} — pessoal</div>
+    <div class="grid2">
+      <div class="mc"><div class="mc-lbl">Receita (retiradas)</div><div class="mc-val" style="color:var(--blue)">${fmtV(totalRetPes)}</div></div>
+      <div class="mc"><div class="mc-lbl">Custos pagos</div><div class="mc-val" style="color:var(--amber)">${fmtV(totalPes)}</div></div>
+      <div class="mc full"><div class="mc-lbl">Saldo estimado</div><div class="mc-val" style="color:${totalRetPes-totalPes>=0?'var(--green)':'var(--red)'}">${fmtV(totalRetPes-totalPes)}</div><div class="mc-sub">Mês ainda aberto</div></div>
+    </div>`;
+
+  document.getElementById('painelAcumulado').innerHTML=`
+    <div class="sh">Acumulado 2026</div>
+    <div class="grid2">
+      <div class="mc"><div class="mc-lbl">Lucro empresa</div><div class="mc-val" style="color:${lucroAcum>=0?'var(--green)':'var(--red)'}">${fmtV(lucroAcum)}</div></div>
+      <div class="mc"><div class="mc-lbl">Saldo pessoal</div><div class="mc-val" style="color:var(--blue)">${fmtV(saldos.pessoal)}</div></div>
+    </div>`;
+}
+
+// LUCRO DO MES ANTERIOR (dinamico para retirada)
+async function getLucroAnterior(y, m){
+  const mAnterior = new Date(y, m-1);
+  const ms = mesStr(mAnterior.getFullYear(), mAnterior.getMonth());
+  const dados = await calcularMes(ms);
+  return dados.lucro;
+}
+let componentesRet = []; // carregado do banco
 let retiradaMes={};
 
 function mudarMesRet(d){
@@ -728,19 +821,26 @@ async function atualizarRetirada(){
   document.getElementById('mesLabelRet').textContent=mesLabel(mesRet.y,mesRet.m);
   document.getElementById('retContent').innerHTML='<div class="loading">Carregando...</div>';
   const ms=mesStr(mesRet.y,mesRet.m);
+  // Carregar componentes do banco
+  const compRaw = await sbGet('componentes_retirada','select=*&ativo=eq.true&order=id');
+  componentesRet = Array.isArray(compRaw) ? compRaw : [];
+  // Adicionar lucros sempre
+  if(!componentesRet.find(c=>c.chave==='lucros')){
+    componentesRet.push({id:99,nome:'Lucros',chave:'lucros',valor:0,ativo:true,mes_fim:null});
+  }
   const data=await sbGet('retiradas',`select=*&mes=eq.${ms}`);
   retiradaMes={};
   if(Array.isArray(data)){
     data.forEach(r=>{retiradaMes[r.componente]={valor:r.valor,enviado:r.enviado,data:r.data_envio,id:r.id};});
   }
-  renderRetirada();
+  // Lucro anterior dinâmico
+  const lucroAnt = await getLucroAnterior(mesRet.y, mesRet.m);
+  renderRetirada(lucroAnt);
 }
 
-function renderRetirada(){
+function renderRetirada(lucroAnt=0){
   const ms=mesStr(mesRet.y,mesRet.m);
   const mAnterior=new Date(mesRet.y,mesRet.m-1);
-  const msAnt=mesStr(mAnterior.getFullYear(),mAnterior.getMonth());
-  const lucroAnt=LUCROS_POR_MES[msAnt]||0;
 
   // Separar fixos de lucros
   const fixosEnviados=Object.entries(retiradaMes)
@@ -774,36 +874,28 @@ function renderRetirada(){
   // Composição detalhada
   html+=`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:11px 13px;margin-bottom:12px">
     <div style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">Composição</div>
-    <div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-bottom:1px solid var(--border)">
-      <span style="color:var(--text2)">Pro Labore</span>
-      <span style="font-weight:500">${fmtV(retiradaMes['pro_labore']?.enviado?retiradaMes['pro_labore'].valor:0)}</span>
-    </div>
-    <div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-bottom:1px solid var(--border)">
-      <span style="color:var(--text2)">Plano de Saúde</span>
-      <span style="font-weight:500">${fmtV(retiradaMes['plano_saude']?.enviado?retiradaMes['plano_saude'].valor:0)}</span>
-    </div>
-    <div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-bottom:1px solid var(--border)">
-      <span style="color:var(--text2)">Moto</span>
-      <span style="font-weight:500">${fmtV(retiradaMes['moto']?.enviado?retiradaMes['moto'].valor:0)}</span>
-    </div>
-    <div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-bottom:1px solid var(--border)">
-      <span style="color:var(--text2)">Lucros</span>
-      <span style="font-weight:500;color:var(--${excessoLucros?'red':'green'})">${fmtV(lucrosEnv)}${excessoLucros?` ⚠ excede ${fmtV(lucroAnt)}`:''}</span>
-    </div>
+    ${componentesRet.map(c=>{
+      const v=retiradaMes[c.chave]?.enviado?retiradaMes[c.chave].valor:0;
+      const isLucros=c.chave==='lucros';
+      const cor=isLucros&&excessoLucros?'var(--red)':'var(--text)';
+      return `<div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-bottom:1px solid var(--border)">
+        <span style="color:var(--text2)">${c.nome}</span>
+        <span style="font-weight:500;color:${cor}">${fmtV(v)}${isLucros&&excessoLucros?' ⚠':''}</span>
+      </div>`;
+    }).join('')}
     <div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;font-weight:600">
-      <span>Total enviado</span>
-      <span>${fmtV(totalEnv)}</span>
+      <span>Total enviado</span><span>${fmtV(totalEnv)}</span>
     </div>
   </div>`;
 
-  // Componentes
-  COMPONENTES_RET.forEach(c=>{
-    if(c.fim){
-      const[fy,fm]=c.fim.split('-').map(Number);
+  // Cards por componente
+  componentesRet.forEach(c=>{
+    if(c.mes_fim){
+      const[fy,fm]=c.mes_fim.split('-').map(Number);
       if(new Date(mesRet.y,mesRet.m)>new Date(fy,fm-1))return;
     }
-    const r=retiradaMes[c.id];
-    const val=r?.valor||c.valor;
+    const r=retiradaMes[c.chave];
+    const val=r?.valor||c.valor||0;
     const env=r?.enviado||false;
     html+=`<div class="ret-card">
       <div class="ret-top">
@@ -812,13 +904,13 @@ function renderRetirada(){
       </div>
       ${!env?`
         <div class="ret-row">
-          <input type="number" id="ret-val-${c.id}" value="${Number(val).toFixed(2)}" step="0.01" placeholder="Valor">
-          <input type="date" id="ret-data-${c.id}" value="${hoje.toISOString().split('T')[0]}">
+          <input type="number" id="ret-val-${c.chave}" value="${Number(val).toFixed(2)}" step="0.01" placeholder="Valor">
+          <input type="date" id="ret-data-${c.chave}" value="${hoje.toISOString().split('T')[0]}">
         </div>
-        <button class="btn-env" onclick="enviarRetirada('${c.id}','${ms}')">Confirmar envio</button>
+        <button class="btn-env" onclick="enviarRetirada('${c.chave}','${ms}')">Confirmar envio</button>
       `:`
         <div style="font-size:13px;color:var(--green);font-weight:500;margin-top:4px">${fmtV(val)} · ${r.data||''}</div>
-        <button class="btn-env-d" onclick="desfazerRetirada('${c.id}','${ms}')">Desfazer</button>
+        <button class="btn-env-d" onclick="desfazerRetirada('${c.chave}','${ms}')">Desfazer</button>
       `}
     </div>`;
   });
@@ -832,7 +924,9 @@ async function enviarRetirada(comp,ms){
   const dataFmt=data?data.split('-').reverse().join('/'):'';
   await sbPost('retiradas',{componente:comp,mes:ms,valor:val,enviado:true,data_envio:dataFmt},'resolution=merge-duplicates');
   retiradaMes[comp]={valor:val,enviado:true,data:dataFmt};
-  renderRetirada();
+  dadosFinanceiros={}; // limpar cache
+  const lucroAnt = await getLucroAnterior(mesRet.y, mesRet.m);
+  renderRetirada(lucroAnt);
   toast('Retirada confirmada!');
 }
 
@@ -840,7 +934,9 @@ async function desfazerRetirada(comp,ms){
   const val=retiradaMes[comp]?.valor||0;
   await sbPost('retiradas',{componente:comp,mes:ms,valor:val,enviado:false},'resolution=merge-duplicates');
   retiradaMes[comp]={...retiradaMes[comp],enviado:false};
-  renderRetirada();
+  dadosFinanceiros={};
+  const lucroAnt = await getLucroAnterior(mesRet.y, mesRet.m);
+  renderRetirada(lucroAnt);
   toast('Desfeito');
 }
 
@@ -1233,6 +1329,7 @@ function showTab(id,btn){
   document.getElementById('pnl-'+id).classList.add('on');btn.classList.add('on');
   if(id==='relatorio')carregarRelatorio();
   if(id==='retirada')atualizarRetirada();
+  if(id==='painel')carregarPainel();
 }
 
 // NOTIFICAÇÕES DE CONTAS VENCENDO
