@@ -717,27 +717,33 @@ async function calcularMes(ms){
   const totalReceita = receitas.reduce((s,r)=>s+r.valor,0);
   const totalImpostos = impostos.reduce((s,i)=>s+i.valor,0);
 
-  // Custos fixos da empresa (só contas tipo='empresa')
+  // Custos fixos da empresa (contas tipo='empresa')
   const cfEmpresa = pagamentos
     .filter(p=>{ const c=contas.find(x=>x.id===p.conta_id); return c&&c.tipo==='empresa'; })
     .reduce((s,p)=>{ const c=contas.find(x=>x.id===p.conta_id); return s+(p.valor_pago||c?.valor||0); },0);
 
-  // Retiradas do mês (para total retirado — não entram no cálculo do lucro)
+  // Retiradas do mês
   const retiradasRaw = await sbGet('retiradas', `select=*&mes=eq.${ms}&enviado=eq.true`);
   const retiradas = Array.isArray(retiradasRaw) ? retiradasRaw : [];
   const totalRetirado = retiradas.reduce((s,r)=>s+r.valor,0);
+
+  // Componentes fixos de retirada (pro labore, plano, moto) são custos da empresa
+  const cfRetiradas = retiradas
+    .filter(r=>r.componente!=='lucros')
+    .reduce((s,r)=>s+r.valor,0);
 
   // Gastos variáveis empresa
   const cvEmpresa = gastos
     .filter(g=>g.conta==='empresa')
     .reduce((s,g)=>s+g.valor,0);
 
-  // Lucro = Receita - CF empresa - CV empresa - Impostos
-  const lucroLiq = totalReceita - cfEmpresa - cvEmpresa - totalImpostos;
+  // Lucro = Receita - CF empresa - CF retiradas fixas - CV - Impostos
+  const cfTotal = cfEmpresa + cfRetiradas;
+  const lucroLiq = totalReceita - cfTotal - cvEmpresa - totalImpostos;
 
   const result = {
     receita: totalReceita, impostos: totalImpostos,
-    cf: cfEmpresa, cv: cvEmpresa,
+    cf: cfTotal, cv: cvEmpresa,
     lucro: lucroLiq, retirado: totalRetirado,
     receitaItens: receitas, impostosItens: impostos
   };
@@ -816,7 +822,7 @@ async function getLucroAnterior(y, m){
   const dados = await calcularMes(ms);
   return dados.lucro;
 }
-let componentesRet = []; // carregado do banco
+let componentesRet = [];
 let retiradaMes={};
 
 function mudarMesRet(d){
