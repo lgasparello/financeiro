@@ -703,44 +703,46 @@ let dadosFinanceiros = {}; // cache por mes
 
 async function calcularMes(ms){
   if(dadosFinanceiros[ms]) return dadosFinanceiros[ms];
+  // Garantir que contas estão carregadas
+  if(!contas.length) await carregarContas();
+  
   const mesNome = `${MESES_PT[parseInt(ms.split('-')[1])-1]} ${ms.split('-')[0]}`;
-  const [recsRaw, impsRaw, pagsRaw, gastosRaw] = await Promise.all([
+  const [recsRaw, impsRaw, pagsRaw, gastosRaw, retiradasRaw] = await Promise.all([
     sbGet('receitas', `select=*&mes=eq.${ms}`),
     sbGet('impostos', `select=*&mes=eq.${ms}`),
     sbGet('pagamentos_mes', `select=*&mes=eq.${ms}&pago=eq.true`),
-    sbGet('gastos', `select=*&mes=eq.${encodeURIComponent(mesNome)}`)
+    sbGet('gastos', `select=*&mes=eq.${encodeURIComponent(mesNome)}`),
+    sbGet('retiradas', `select=*&mes=eq.${ms}&enviado=eq.true`)
   ]);
   const receitas = Array.isArray(recsRaw) ? recsRaw : [];
   const impostos = Array.isArray(impsRaw) ? impsRaw : [];
   const pagamentos = Array.isArray(pagsRaw) ? pagsRaw : [];
   const gastos = Array.isArray(gastosRaw) ? gastosRaw : [];
+  const retiradas = Array.isArray(retiradasRaw) ? retiradasRaw : [];
 
   const totalReceita = receitas.reduce((s,r)=>s+r.valor,0);
   const totalImpostos = impostos.reduce((s,i)=>s+i.valor,0);
+  const totalRetirado = retiradas.reduce((s,r)=>s+r.valor,0);
 
-  // Custos fixos da empresa (contas tipo='empresa')
+  // CF empresa (contas tipo='empresa' pagas)
   const cfEmpresa = pagamentos
     .filter(p=>{ const c=contas.find(x=>x.id===p.conta_id); return c&&c.tipo==='empresa'; })
     .reduce((s,p)=>{ const c=contas.find(x=>x.id===p.conta_id); return s+(p.valor_pago||c?.valor||0); },0);
 
-  // Retiradas do mês
-  const retiradasRaw = await sbGet('retiradas', `select=*&mes=eq.${ms}&enviado=eq.true`);
-  const retiradas = Array.isArray(retiradasRaw) ? retiradasRaw : [];
-  const totalRetirado = retiradas.reduce((s,r)=>s+r.valor,0);
-
-  // Componentes fixos de retirada (pro labore, plano, moto) são custos da empresa
+  // CF via retiradas fixas (pro labore, plano, moto)
   const cfRetiradas = retiradas
     .filter(r=>r.componente!=='lucros')
     .reduce((s,r)=>s+r.valor,0);
 
-  // Gastos variáveis empresa
+  // CV empresa
   const cvEmpresa = gastos
     .filter(g=>g.conta==='empresa')
     .reduce((s,g)=>s+g.valor,0);
 
-  // Lucro = Receita - CF empresa - CF retiradas fixas - CV - Impostos
   const cfTotal = cfEmpresa + cfRetiradas;
   const lucroLiq = totalReceita - cfTotal - cvEmpresa - totalImpostos;
+
+  console.log(`[${ms}] Receita:${totalReceita} CF:${cfEmpresa} CFRet:${cfRetiradas} CV:${cvEmpresa} Imp:${totalImpostos} Lucro:${lucroLiq} Retiradas:${retiradas.length}`);
 
   const result = {
     receita: totalReceita, impostos: totalImpostos,
