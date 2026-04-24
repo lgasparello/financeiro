@@ -740,6 +740,7 @@ async function calcularMes(ms){
 }
 
 async function carregarPainel(){
+  dadosFinanceiros = {}; // limpar cache para recalcular
   const ms = mesStr(mesAtual.y, mesAtual.m);
   const mAnterior = new Date(mesAtual.y, mesAtual.m-1);
   const msAnt = mesStr(mAnterior.getFullYear(), mAnterior.getMonth());
