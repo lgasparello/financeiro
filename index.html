@@ -278,8 +278,18 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <button class="mes-btn" onclick="mudarMesRet(1)">&#8250;</button>
       <button class="mes-hoje-btn" onclick="irParaHojeRet()">Hoje</button>
     </div>
-    <div class="scr">
+    <div class="scr" style="flex:1">
       <div id="retContent"><div class="loading">Carregando...</div></div>
+    </div>
+    <div class="total-bar" id="retTotalBar" style="display:none">
+      <div class="total-row">
+        <div>
+          <div class="total-label" id="retTotalCount">0 items</div>
+          <div class="total-val" id="retTotalVal">R$0,00</div>
+        </div>
+        <button onclick="retSels.clear();document.getElementById('retTotalBar').style.display='none';document.querySelectorAll('[id^=retsel-]').forEach(e=>e.className='ci-check')" style="background:none;border:1px solid var(--border2);border-radius:var(--rs);padding:6px 12px;font-size:12px;color:var(--text3);cursor:pointer;font-family:inherit">Limpar</button>
+      </div>
+      <button class="btn-pagar" onclick="enviarSelecionados()">Confirmar envio selecionados</button>
     </div>
   </div>
 
@@ -707,31 +717,27 @@ async function calcularMes(ms){
   const totalReceita = receitas.reduce((s,r)=>s+r.valor,0);
   const totalImpostos = impostos.reduce((s,i)=>s+i.valor,0);
 
-  // Custos fixos = todos pagamentos confirmados do mês (empresa + pessoal via empresa)
+  // Custos fixos da empresa (só contas tipo='empresa')
   const cfEmpresa = pagamentos
     .filter(p=>{ const c=contas.find(x=>x.id===p.conta_id); return c&&c.tipo==='empresa'; })
     .reduce((s,p)=>{ const c=contas.find(x=>x.id===p.conta_id); return s+(p.valor_pago||c?.valor||0); },0);
 
-  // Retiradas confirmadas (pro labore + plano + moto — são custos da empresa)
+  // Retiradas do mês (para total retirado — não entram no cálculo do lucro)
   const retiradasRaw = await sbGet('retiradas', `select=*&mes=eq.${ms}&enviado=eq.true`);
   const retiradas = Array.isArray(retiradasRaw) ? retiradasRaw : [];
   const totalRetirado = retiradas.reduce((s,r)=>s+r.valor,0);
-  // Fixos via retirada (excluindo lucros)
-  const cfViaRetirada = retiradas
-    .filter(r=>r.componente!=='lucros')
-    .reduce((s,r)=>s+r.valor,0);
 
-  // Gastos variáveis empresa (lançados no chat/gasto rápido)
+  // Gastos variáveis empresa
   const cvEmpresa = gastos
     .filter(g=>g.conta==='empresa')
     .reduce((s,g)=>s+g.valor,0);
 
-  const cfTotal = cfEmpresa + cfViaRetirada;
-  const lucroLiq = totalReceita - cfTotal - cvEmpresa - totalImpostos;
+  // Lucro = Receita - CF empresa - CV empresa - Impostos
+  const lucroLiq = totalReceita - cfEmpresa - cvEmpresa - totalImpostos;
 
   const result = {
     receita: totalReceita, impostos: totalImpostos,
-    cf: cfTotal, cv: cvEmpresa,
+    cf: cfEmpresa, cv: cvEmpresa,
     lucro: lucroLiq, retirado: totalRetirado,
     receitaItens: receitas, impostosItens: impostos
   };
@@ -892,7 +898,8 @@ function renderRetirada(lucroAnt=0){
     </div>
   </div>`;
 
-  // Cards por componente
+  // Cards por componente com checkbox
+  let retSelecionados = {};
   componentesRet.forEach(c=>{
     if(c.mes_fim){
       const[fy,fm]=c.mes_fim.split('-').map(Number);
@@ -901,14 +908,17 @@ function renderRetirada(lucroAnt=0){
     const r=retiradaMes[c.chave];
     const val=r?.valor||c.valor||0;
     const env=r?.enviado||false;
-    html+=`<div class="ret-card">
+    html+=`<div class="ret-card" id="retcard-${c.chave}">
       <div class="ret-top">
-        <div class="ret-nome">${c.nome}</div>
+        <div style="display:flex;gap:8px;align-items:center">
+          ${!env?`<div class="ci-check" id="retsel-${c.chave}" onclick="toggleRetSel('${c.chave}')"><svg viewBox="0 0 10 10" fill="none" stroke="#fff" stroke-width="2"><polyline points="1.5,5 4,7.5 8.5,2.5"/></svg></div>`:''}
+          <div class="ret-nome">${c.nome}</div>
+        </div>
         <span class="ret-status ${env?'ret-env':'ret-pend'}">${env?'Enviado':'Pendente'}</span>
       </div>
       ${!env?`
-        <div class="ret-row">
-          <input type="number" id="ret-val-${c.chave}" value="${Number(val).toFixed(2)}" step="0.01" placeholder="Valor">
+        <div class="ret-row" style="margin-top:8px">
+          <input type="number" id="ret-val-${c.chave}" value="${Number(val).toFixed(2)}" step="0.01" placeholder="Valor" onchange="atualizarTotalRet()">
           <input type="date" id="ret-data-${c.chave}" value="${hoje.toISOString().split('T')[0]}">
         </div>
         <button class="btn-env" onclick="enviarRetirada('${c.chave}','${ms}')">Confirmar envio</button>
@@ -920,6 +930,39 @@ function renderRetirada(lucroAnt=0){
   });
 
   document.getElementById('retContent').innerHTML=html;
+  document.getElementById('retTotalBar').style.display='none';
+}
+
+let retSels = new Set();
+
+function toggleRetSel(chave){
+  if(retSels.has(chave)) retSels.delete(chave);
+  else retSels.add(chave);
+  const el=document.getElementById('retsel-'+chave);
+  if(el) el.className='ci-check'+(retSels.has(chave)?' on':'');
+  atualizarTotalRet();
+}
+
+function atualizarTotalRet(){
+  const bar=document.getElementById('retTotalBar');
+  if(!retSels.size){bar.style.display='none';return;}
+  bar.style.display='block';
+  let total=0;
+  retSels.forEach(chave=>{
+    const inp=document.getElementById('ret-val-'+chave);
+    total+=parseFloat(inp?.value||0)||0;
+  });
+  document.getElementById('retTotalVal').textContent=fmtV(total);
+  document.getElementById('retTotalCount').textContent=retSels.size+' item'+(retSels.size>1?'s':'');
+}
+
+async function enviarSelecionados(){
+  const ms=mesStr(mesRet.y,mesRet.m);
+  for(const chave of retSels){
+    await enviarRetirada(chave,ms);
+  }
+  retSels.clear();
+  document.getElementById('retTotalBar').style.display='none';
 }
 
 async function enviarRetirada(comp,ms){
