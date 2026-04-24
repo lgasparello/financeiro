@@ -1121,8 +1121,29 @@ async function sendMsg(){
     }
     // Adicionar resposta ao histórico
     chatHistory.push({role:'assistant',content:resp});
-    let parsed=null;
-    try{parsed=JSON.parse(resp.replace(/```json|```/g,'').trim());}catch(e){}
+    
+    // Extrair todos os JSONs da resposta
+    const jsonMatches = [];
+    const jsonRegex = /\{[^{}]*"a"\s*:\s*"[^"]*"[^{}]*\}/g;
+    let match;
+    while((match = jsonRegex.exec(resp)) !== null){
+      try{ jsonMatches.push(JSON.parse(match[0])); }catch(e){}
+    }
+    // Se não encontrou com regex, tenta parse simples
+    if(!jsonMatches.length){
+      try{ 
+        const p=JSON.parse(resp.replace(/```json|```/g,'').trim());
+        if(p&&p.a) jsonMatches.push(p);
+      }catch(e){}
+    }
+
+    if(jsonMatches.length){
+      for(const parsed of jsonMatches){
+        await processarAcaoChat(parsed);
+      }
+    } else {
+      addMsg(resp.replace(/\n/g,'<br>'),'a');
+    }
     if(parsed&&parsed.a==='reg'){
       addMsg(`<b>${parsed.desc}</b> <span class="bdt ${parsed.conta==='empresa'?'bd-l':'bd-p'}">${parsed.conta==='empresa'?'LLG':'Pes.'}</span><br><span style="color:var(--red)">-${fmtV(parsed.valor)}</span> · ${parsed.cat}<br><span style="font-size:12px;color:var(--green)">${parsed.msg}</span>`,'g');
       await sbPost('gastos',{descricao:parsed.desc,valor:parsed.valor,conta:parsed.conta,mes:parsed.mes,categoria:parsed.cat,forma_pagamento:'Via chat',data_lancamento:hoje.toLocaleDateString('pt-BR')});
@@ -1200,8 +1221,71 @@ async function sendMsg(){
     }
   }catch(e){rmTyping();addMsg('Erro de conexão.','a');}
 }
-function hk(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg();}}
-function sg(el){document.getElementById('inp').value=el.textContent;sendMsg();}
+
+async function processarAcaoChat(parsed){
+  if(parsed.a==='reg'){
+    const forma=parsed.forma||'deb';
+    addMsg(`<b>${parsed.desc}</b> <span class="bdt ${parsed.conta==='empresa'?'bd-l':'bd-p'}">${parsed.conta==='empresa'?'LLG':'Pes.'}</span><br><span style="color:var(--red)">-${fmtV(parsed.valor)}</span> · ${parsed.cat}<br><span style="font-size:12px;color:var(--green)">${parsed.msg}</span>`,'g');
+    await sbPost('gastos',{descricao:parsed.desc,valor:parsed.valor,conta:parsed.conta,mes:parsed.mes,categoria:parsed.cat,forma_pagamento:'Via chat',data_lancamento:hoje.toLocaleDateString('pt-BR')});
+    if(forma!=='crt'){
+      const contaSaldo=parsed.conta==='empresa'?'llg':'pessoal';
+      await abaterSaldo(contaSaldo,parsed.valor);
+      if(parsed.cat==='Retirada'&&parsed.conta==='empresa') await reporSaldo('pessoal',parsed.valor);
+    }
+    toast('Gasto registrado!');
+
+  } else if(parsed.a==='add_recorrente'){
+    await sbPost('contas_fixas',{nome:parsed.desc,beneficiario:parsed.beneficiario||parsed.desc,valor:parsed.valor,dia_vencimento:parsed.dia||5,tipo:parsed.conta==='empresa'?'empresa':'pessoal',forma_padrao:parsed.conta==='empresa'?'llg':'pes',categoria:'outros',ativo:true});
+    await carregarContas();await carregarStatusMes(mesStr(mesAtual.y,mesAtual.m));renderDias();renderTodasContas();
+    addMsg(`✅ <b>${parsed.desc}</b> adicionada!<br>${fmtV(parsed.valor)}/mês · dia ${parsed.dia} · ${parsed.conta==='empresa'?'LLG':'Pessoal'}`,'g');
+    toast('Conta adicionada!');
+
+  } else if(parsed.a==='edit_conta'){
+    await fetch(`${SB_URL}/rest/v1/contas_fixas?id=eq.${parsed.id}`,{method:'PATCH',headers:{...SB_HDR},body:JSON.stringify({[parsed.campo]:parsed.valor_novo})});
+    await carregarContas();await carregarStatusMes(mesStr(mesAtual.y,mesAtual.m));renderDias();renderTodasContas();
+    addMsg(`✅ ${parsed.msg}`,'g');toast('Conta atualizada!');
+
+  } else if(parsed.a==='desativar_conta'){
+    await fetch(`${SB_URL}/rest/v1/contas_fixas?id=eq.${parsed.id}`,{method:'PATCH',headers:{...SB_HDR},body:JSON.stringify({ativo:false})});
+    await carregarContas();await carregarStatusMes(mesStr(mesAtual.y,mesAtual.m));renderDias();renderTodasContas();
+    addMsg(`✅ ${parsed.msg}`,'g');toast('Conta desativada!');
+
+  } else if(parsed.a==='pagar_conta'){
+    const ms=mesStr(mesAtual.y,mesAtual.m);
+    const c=contas.find(x=>x.id===parsed.id);
+    if(!statusMes[parsed.id])statusMes[parsed.id]={pago:false,valorPago:parsed.valor,forma:parsed.forma||'pes',selecionado:false};
+    statusMes[parsed.id]={...statusMes[parsed.id],pago:true,valorPago:parsed.valor,forma:parsed.forma||'pes'};
+    await salvarStatusMes(parsed.id,ms,{pago:true,valor_pago:parsed.valor,forma:parsed.forma||'pes',data_pagamento:hoje.toLocaleDateString('pt-BR')});
+    if(parsed.forma!=='crt'&&c) await abaterSaldo(c.tipo==='empresa'?'llg':'pessoal',parsed.valor);
+    renderTodasContas();renderDias();
+    addMsg(`✅ ${parsed.msg}`,'g');toast('Conta paga!');
+
+  } else if(parsed.a==='desfazer_conta'){
+    const ms=mesStr(mesAtual.y,mesAtual.m);
+    const c=contas.find(x=>x.id===parsed.id);
+    const v=statusMes[parsed.id]?.valorPago||0;
+    const forma=statusMes[parsed.id]?.forma||'pes';
+    if(statusMes[parsed.id])statusMes[parsed.id]={...statusMes[parsed.id],pago:false};
+    await salvarStatusMes(parsed.id,ms,{pago:false,valor_pago:v,forma});
+    if(forma!=='crt'&&c) await reporSaldo(c.tipo==='empresa'?'llg':'pessoal',v);
+    renderTodasContas();renderDias();
+    addMsg(`✅ ${parsed.msg}`,'g');toast('Desfeito!');
+
+  } else if(parsed.a==='ajustar_saldo'){
+    saldos[parsed.conta]=parsed.valor;
+    await fetch(`${SB_URL}/rest/v1/saldos?id=eq.${parsed.conta}`,{method:'PATCH',headers:{...SB_HDR},body:JSON.stringify({valor:parsed.valor})});
+    atualizarPillsSaldo();
+    addMsg(`✅ ${parsed.msg}`,'g');toast('Saldo atualizado!');
+
+  } else if(parsed.a==='retirada'){
+    const ms=mesStr(mesRet.y,mesRet.m);
+    await sbPost('retiradas',{componente:parsed.componente,mes:ms,valor:parsed.valor,enviado:true,data_envio:parsed.data||hoje.toLocaleDateString('pt-BR')},'resolution=merge-duplicates');
+    retiradaMes[parsed.componente]={valor:parsed.valor,enviado:true,data:parsed.data};
+    await abaterSaldo('llg',parsed.valor);
+    await reporSaldo('pessoal',parsed.valor);
+    addMsg(`✅ ${parsed.msg}`,'g');toast('Retirada registrada!');
+  }
+}
 
 async function gerarJSON(){
   const gastos=await sbGet('gastos','select=*&order=created_at.desc&limit=50');
