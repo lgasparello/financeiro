@@ -298,7 +298,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         </div>
         <button onclick="retSels.clear();document.getElementById('retTotalBar').style.display='none';document.querySelectorAll('[id^=retsel-]').forEach(e=>e.className='ci-check')" style="background:none;border:1px solid var(--border2);border-radius:var(--rs);padding:6px 12px;font-size:12px;color:var(--text3);cursor:pointer;font-family:inherit">Limpar</button>
       </div>
-      <button class="btn-pagar" onclick="enviarSelecionados()">Confirmar envio selecionados</button>
+      <div style="display:flex;gap:6px">
+        <button class="btn-pagar" onclick="enviarSelecionados()" style="flex:1">Confirmar envio</button>
+        <button onclick="programarSelecionadosRet()" style="flex:0;padding:10px 14px;background:var(--purple-l);border:1px solid var(--purple-m);border-radius:var(--rs);color:var(--purple);font-size:13px;font-weight:500;cursor:pointer;font-family:inherit;white-space:nowrap">📅 Programar</button>
+      </div>
     </div>
   </div>
 
@@ -750,19 +753,60 @@ async function programarConta(id){
   const v = parseFloat(inp?.value || statusMes[id]?.valorPago) || statusMes[id]?.valorPago;
   const c = contas.find(x=>x.id===id);
   const ms = mesStr(mesAtual.y, mesAtual.m);
-  const dataProgr = `${String(c.dia_vencimento).padStart(2,'0')}/${String(mesAtual.m+1).padStart(2,'0')}/${mesAtual.y}`;
+
   if(agendamentos[id]){
     // Remover agendamento
     await fetch(`${SB_URL}/rest/v1/agendamentos?conta_id=eq.${id}&mes=eq.${ms}`,{method:'DELETE',headers:SB_HDR});
     delete agendamentos[id];
     toast('Agendamento removido');
-  } else {
-    // Criar agendamento
-    await sbPost('agendamentos',{conta_id:id,mes:ms,valor:v,forma:statusMes[id]?.forma||c.forma_padrao,data_programada:dataProgr},'resolution=merge-duplicates');
-    agendamentos[id] = {conta_id:id,mes:ms,valor:v,forma:statusMes[id]?.forma,data_programada:dataProgr};
-    toast('Pagamento programado para '+dataProgr+'!');
+    renderTodasContas();
+    return;
   }
+
+  // Data padrão = dia de vencimento do mês atual
+  const diaDefault = String(c.dia_vencimento).padStart(2,'0');
+  const mesStr2 = String(mesAtual.m+1).padStart(2,'0');
+  const dataDefault = `${mesAtual.y}-${mesStr2}-${diaDefault}`;
+
+  // Mostrar mini modal para confirmar/alterar data
+  const existing = document.getElementById('modalProgr');
+  if(existing) existing.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'modalProgr';
+  modal.style.cssText = `position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;background:var(--bg);border-top:1px solid var(--border);border-radius:16px 16px 0 0;padding:16px;z-index:200;box-shadow:0 -4px 24px rgba(0,0,0,.15)`;
+  modal.innerHTML = `
+    <div style="font-size:13px;font-weight:600;margin-bottom:12px">📅 Programar — ${c.nome}</div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+      <label style="font-size:12px;color:var(--text3);white-space:nowrap">Data:</label>
+      <input type="date" id="inputDataProgr" value="${dataDefault}" style="flex:1;padding:8px 10px;border-radius:var(--rs);border:1px solid var(--border2);background:var(--bg2);color:var(--text);font-size:13px;font-family:inherit">
+    </div>
+    <div style="display:flex;gap:6px">
+      <button onclick="confirmarProgramar(${id})" style="flex:1;padding:10px;background:var(--purple-l);border:1px solid var(--purple-m);border-radius:var(--rs);color:var(--purple);font-size:13px;font-weight:500;cursor:pointer;font-family:inherit">Confirmar</button>
+      <button onclick="document.getElementById('modalProgr').remove()" style="padding:10px 14px;background:none;border:1px solid var(--border2);border-radius:var(--rs);color:var(--text3);font-size:13px;cursor:pointer;font-family:inherit">Cancelar</button>
+    </div>`;
+  document.querySelector('.app').appendChild(modal);
+  // Guardar id temporário
+  modal._contaId = id;
+  modal._valor = v;
+  modal._ms = ms;
+}
+
+async function confirmarProgramar(id){
+  const modal = document.getElementById('modalProgr');
+  if(!modal) return;
+  const dataISO = document.getElementById('inputDataProgr').value;
+  if(!dataISO) return;
+  const parts = dataISO.split('-');
+  const dataFmt = `${parts[2]}/${parts[1]}/${parts[0]}`;
+  const v = modal._valor;
+  const ms = modal._ms;
+  const c = contas.find(x=>x.id===id);
+  await sbPost('agendamentos',{conta_id:id,mes:ms,valor:v,forma:statusMes[id]?.forma||c.forma_padrao,data_programada:dataFmt},'resolution=merge-duplicates');
+  agendamentos[id] = {conta_id:id,mes:ms,valor:v,forma:statusMes[id]?.forma,data_programada:dataFmt};
+  modal.remove();
   renderTodasContas();
+  toast('Programado para '+dataFmt+'!');
 }
 
 async function programarSelecionados(){
@@ -1093,6 +1137,7 @@ function renderRetirada(lucroAnt=0, lucroAntRaw=0){
           <input type="date" id="ret-data-${c.chave}" value="${hoje.toISOString().split('T')[0]}">
         </div>
         <button class="btn-env" onclick="enviarRetirada('${c.chave}','${ms}')">Confirmar envio</button>
+        <button onclick="programarRetirada('${c.chave}','${ms}',${val})" style="margin-top:4px;width:100%;padding:7px;background:var(--purple-l);border:1px solid var(--purple-m);border-radius:var(--rs);color:var(--purple);font-size:12px;cursor:pointer;font-family:inherit">📅 Programar</button>
       `:`
         <div style="font-size:13px;color:var(--green);font-weight:500;margin-top:4px">${fmtV(val)} · ${r.data||''}</div>
         <button class="btn-env-d" onclick="desfazerRetirada('${c.chave}','${ms}')">Desfazer</button>
@@ -1125,6 +1170,82 @@ function atualizarTotalRet(){
   });
   document.getElementById('retTotalVal').textContent=fmtV(total);
   document.getElementById('retTotalCount').textContent=retSels.size+' item'+(retSels.size>1?'s':'');
+}
+
+async function programarRetirada(comp, ms, val){
+  const ano = ms.split('-')[0];
+  const m = ms.split('-')[1];
+  const dataDefault = `${ano}-${m}-05`;
+  
+  const existing = document.getElementById('modalProgr');
+  if(existing) existing.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'modalProgr';
+  modal.style.cssText = `position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;background:var(--bg);border-top:1px solid var(--border);border-radius:16px 16px 0 0;padding:16px;z-index:200;box-shadow:0 -4px 24px rgba(0,0,0,.15)`;
+  modal.innerHTML = `
+    <div style="font-size:13px;font-weight:600;margin-bottom:12px">📅 Programar retirada — ${comp}</div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+      <label style="font-size:12px;color:var(--text3);white-space:nowrap">Data:</label>
+      <input type="date" id="inputDataProgrRet" value="${dataDefault}" style="flex:1;padding:8px 10px;border-radius:var(--rs);border:1px solid var(--border2);background:var(--bg2);color:var(--text);font-size:13px;font-family:inherit">
+    </div>
+    <div style="display:flex;gap:6px">
+      <button onclick="confirmarProgramarRet('${comp}','${ms}',${val})" style="flex:1;padding:10px;background:var(--purple-l);border:1px solid var(--purple-m);border-radius:var(--rs);color:var(--purple);font-size:13px;font-weight:500;cursor:pointer;font-family:inherit">Confirmar</button>
+      <button onclick="document.getElementById('modalProgr').remove()" style="padding:10px 14px;background:none;border:1px solid var(--border2);border-radius:var(--rs);color:var(--text3);font-size:13px;cursor:pointer;font-family:inherit">Cancelar</button>
+    </div>`;
+  document.querySelector('.app').appendChild(modal);
+}
+
+async function confirmarProgramarRet(comp, ms, val){
+  const dataISO = document.getElementById('inputDataProgrRet')?.value;
+  if(!dataISO) return;
+  const parts = dataISO.split('-');
+  const dataFmt = `${parts[2]}/${parts[1]}/${parts[0]}`;
+  await sbPost('agendamentos',{conta_id:null,mes:ms,valor:val,forma:'ret',data_programada:dataFmt,componente:comp},'resolution=merge-duplicates');
+  document.getElementById('modalProgr')?.remove();
+  toast('Retirada programada para '+dataFmt+'!');
+}
+
+async function programarSelecionadosRet(){
+  const ms = mesStr(mesRet.y, mesRet.m);
+  const ano = ms.split('-')[0];
+  const m = ms.split('-')[1];
+  const dataDefault = `${ano}-${m}-05`;
+
+  const existing = document.getElementById('modalProgr');
+  if(existing) existing.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'modalProgr';
+  modal.style.cssText = `position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;background:var(--bg);border-top:1px solid var(--border);border-radius:16px 16px 0 0;padding:16px;z-index:200;box-shadow:0 -4px 24px rgba(0,0,0,.15)`;
+  modal.innerHTML = `
+    <div style="font-size:13px;font-weight:600;margin-bottom:12px">📅 Programar retiradas selecionadas</div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+      <label style="font-size:12px;color:var(--text3);white-space:nowrap">Data:</label>
+      <input type="date" id="inputDataProgrRetSel" value="${dataDefault}" style="flex:1;padding:8px 10px;border-radius:var(--rs);border:1px solid var(--border2);background:var(--bg2);color:var(--text);font-size:13px;font-family:inherit">
+    </div>
+    <div style="display:flex;gap:6px">
+      <button onclick="confirmarProgramarRetSel()" style="flex:1;padding:10px;background:var(--purple-l);border:1px solid var(--purple-m);border-radius:var(--rs);color:var(--purple);font-size:13px;font-weight:500;cursor:pointer;font-family:inherit">Confirmar</button>
+      <button onclick="document.getElementById('modalProgr').remove()" style="padding:10px 14px;background:none;border:1px solid var(--border2);border-radius:var(--rs);color:var(--text3);font-size:13px;cursor:pointer;font-family:inherit">Cancelar</button>
+    </div>`;
+  document.querySelector('.app').appendChild(modal);
+}
+
+async function confirmarProgramarRetSel(){
+  const dataISO = document.getElementById('inputDataProgrRetSel')?.value;
+  if(!dataISO) return;
+  const parts = dataISO.split('-');
+  const dataFmt = `${parts[2]}/${parts[1]}/${parts[0]}`;
+  const ms = mesStr(mesRet.y, mesRet.m);
+  for(const chave of retSels){
+    const inp = document.getElementById('ret-val-'+chave);
+    const val = parseFloat(inp?.value||0)||0;
+    await sbPost('agendamentos',{conta_id:null,mes:ms,valor:val,forma:'ret',data_programada:dataFmt,componente:chave},'resolution=merge-duplicates');
+  }
+  retSels.clear();
+  document.getElementById('retTotalBar').style.display='none';
+  document.getElementById('modalProgr')?.remove();
+  toast('Retiradas programadas para '+dataFmt+'!');
 }
 
 async function enviarSelecionados(){
