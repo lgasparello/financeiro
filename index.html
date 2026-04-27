@@ -1329,13 +1329,21 @@ async function sendMsg(){
   if(chatHistory.length>6) chatHistory=chatHistory.slice(-6);
   try{
     // Buscar contexto dinâmico do banco
+    const ms = mesStr(mesAtual.y, mesAtual.m);
     const [gastosRec, pagsRec] = await Promise.all([
-      sbGet('gastos','select=*&order=created_at.desc&limit=30'),
-      sbGet('pagamentos_mes',`select=*&mes=eq.${mesStr(mesAtual.y,mesAtual.m)}&pago=eq.true`)
+      sbGet('gastos',`select=*&order=created_at.desc&limit=30`),
+      sbGet('pagamentos_mes',`select=*&mes=eq.${ms}&pago=eq.true&order=data_pagamento.desc`)
     ]);
-    const ctxGastos = Array.isArray(gastosRec) ? gastosRec.map(g=>`${g.data_lancamento} ${g.descricao} R$${g.valor} (${g.categoria})`).join('\n') : '';
-    const ctxPagas = Array.isArray(pagsRec) ? pagsRec.map(p=>{const c=contas.find(x=>x.id===p.conta_id);return c?`${c.nome} R$${p.valor_pago}`:''}).filter(Boolean).join(', ') : '';
-    const sysComCtx = SYS_BASE + `\n\nSALDO ATUAL: LLG R$${fmtVl(saldos.llg)} | Pessoal R$${fmtVl(saldos.pessoal)}\nCONTAS PAGAS ESTE MÊS: ${ctxPagas||'nenhuma'}\nGASTOS RECENTES:\n${ctxGastos||'nenhum'}`;
+    const ctxGastos = Array.isArray(gastosRec) ? gastosRec
+      .map(g=>`${g.data_lancamento} | ${g.descricao} | R$${g.valor} | ${g.categoria} | ${g.conta}`)
+      .join('\n') : '';
+    const ctxPagas = Array.isArray(pagsRec) ? pagsRec
+      .map(p=>{ const c=contas.find(x=>x.id===p.conta_id); return c?`${p.data_pagamento||'?'} | ${c.nome} | R$${p.valor_pago} | ${p.forma==='pes'?'débito pessoal':p.forma==='llg'?'débito empresa':'cartão'} | ${c.tipo}`:null; })
+      .filter(Boolean).join('\n') : '';
+    const sysComCtx = SYS_BASE +
+      `\n\nSALDO ATUAL: Empresa R$${fmtVl(saldos.llg)} | Pessoal R$${fmtVl(saldos.pessoal)}` +
+      `\n\nCONTAS PAGAS ESTE MÊS (${mesLabel(mesAtual.y,mesAtual.m)}) — data | nome | valor | forma | tipo:\n${ctxPagas||'nenhuma'}` +
+      `\n\nGASTOS VARIÁVEIS RECENTES — data | descrição | valor | categoria | conta:\n${ctxGastos||'nenhum'}`;
     const r=await fetch('/api/chat',{
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:800,system:sysComCtx,messages:chatHistory})
