@@ -252,6 +252,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <button class="fbtn" onclick="setFiltro('pessoal',this)">Pessoal</button>
       <button class="fbtn" onclick="setFiltro('empresa',this)">LLG</button>
     </div>
+    <div id="benefFiltroRow" style="display:none;padding:8px 12px;border-bottom:1px solid var(--border);overflow-x:auto;white-space:nowrap;flex-shrink:0">
+      <div id="benefFiltros" style="display:flex;gap:6px">
+        <button class="fbtn on-all" onclick="setBenefFiltro('',this)">Todos</button>
+      </div>
+    </div>
     <div class="scr" style="flex:1">
       <div class="sh" style="margin-top:0">Dias do mês</div>
       <div class="dias-wrap" id="diasWrap"></div>
@@ -489,8 +494,64 @@ let contas=[];
 let statusMes={};
 let filtro='all';
 let diaSel=null;
+let benefFiltro='';
 
-// CARREGAR CONTAS DO SUPABASE
+function contasFiltradas(){
+  const ms=mesStr(mesAtual.y,mesAtual.m);
+  return contas.filter(c=>{
+    if(filtro!=='all'&&c.tipo!==filtro)return false;
+    if(benefFiltro&&c.beneficiario!==benefFiltro)return false;
+    if(c.mes_fim){
+      const [fy,fm]=c.mes_fim.split('-').map(Number);
+      const fim=new Date(fy,fm-1);
+      const mes=new Date(mesAtual.y,mesAtual.m);
+      if(mes>fim)return false;
+    }
+    return true;
+  });
+}
+
+function setBenefFiltro(benef, btn){
+  benefFiltro = benef;
+  document.querySelectorAll('#benefFiltros .fbtn').forEach(b=>b.className='fbtn');
+  btn.className='fbtn on-all';
+  renderDias();
+  renderTodasContas();
+}
+
+function atualizarBenefFiltros(){
+  const lista = contas.filter(c=>{
+    if(filtro!=='all'&&c.tipo!==filtro)return false;
+    if(c.mes_fim){
+      const[fy,fm]=c.mes_fim.split('-').map(Number);
+      if(new Date(mesAtual.y,mesAtual.m)>new Date(fy,fm-1))return false;
+    }
+    return true;
+  });
+  const beneficiarios=[...new Set(lista.map(c=>c.beneficiario))].sort();
+  const benefRow=document.getElementById('benefFiltroRow');
+  const benefDiv=document.getElementById('benefFiltros');
+  if(beneficiarios.length>1){
+    benefRow.style.display='block';
+    let html='<button class="fbtn on-all" onclick="setBenefFiltro(\'\',this)">Todos</button>';
+    beneficiarios.forEach(b=>{
+      const nome=b.split(' ')[0];
+      html+=`<button class="fbtn" onclick="setBenefFiltro('${b}',this)">${nome}</button>`;
+    });
+    benefDiv.innerHTML=html;
+  } else {
+    benefRow.style.display='none';
+  }
+}
+
+function setFiltro(f,btn){
+  filtro=f;
+  benefFiltro='';
+  document.querySelectorAll('.fbtn').forEach(b=>b.className='fbtn');
+  btn.className='fbtn '+(f==='all'?'on-all':f==='empresa'?'on-llg':'on-pes');
+  atualizarBenefFiltros();
+  renderDias();if(diaSel!==null)renderDiaInfo(diaSel);renderTodasContas();
+}
 async function carregarContas(){
   const data=await sbGet('contas_fixas','select=*&ativo=eq.true&order=dia_vencimento');
   if(Array.isArray(data)) contas=data;
@@ -508,34 +569,11 @@ async function carregarStatusMes(ms){
       };
     });
   }
-  // Garantir estado padrão para contas sem status
   contas.forEach(c=>{
     if(!statusMes[c.id]){
       statusMes[c.id]={pago:false,valorPago:c.valor,forma:c.forma_padrao,data:null,id:null,selecionado:false};
     }
   });
-}
-
-function contasFiltradas(){
-  const ms=mesStr(mesAtual.y,mesAtual.m);
-  return contas.filter(c=>{
-    if(filtro!=='all'&&c.tipo!==filtro)return false;
-    // Verificar se conta estava ativa nesse mês
-    if(c.mes_fim){
-      const [fy,fm]=c.mes_fim.split('-').map(Number);
-      const fim=new Date(fy,fm-1);
-      const mes=new Date(mesAtual.y,mesAtual.m);
-      if(mes>fim)return false;
-    }
-    return true;
-  });
-}
-
-function setFiltro(f,btn){
-  filtro=f;
-  document.querySelectorAll('.fbtn').forEach(b=>b.className='fbtn');
-  btn.className='fbtn '+(f==='all'?'on-all':f==='empresa'?'on-llg':'on-pes');
-  renderDias();if(diaSel!==null)renderDiaInfo(diaSel);renderTodasContas();
 }
 
 function mudarMes(d){
@@ -557,6 +595,7 @@ async function atualizarContas(){
   document.getElementById('mesLabel').textContent=mesLabel(mesAtual.y,mesAtual.m);
   document.getElementById('todasContas').innerHTML='<div class="loading">Carregando...</div>';
   await carregarStatusMes(mesStr(mesAtual.y,mesAtual.m));
+  atualizarBenefFiltros();
   renderDias();
   document.getElementById('diaInfo').innerHTML='<div style="font-size:12px;color:var(--text3)">Toque num dia para ver as contas</div>';
   renderTodasContas();
