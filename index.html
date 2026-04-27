@@ -272,7 +272,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         <button onclick="limparSelecao()" style="background:none;border:1px solid var(--border2);border-radius:var(--rs);padding:6px 12px;font-size:12px;color:var(--text3);cursor:pointer;font-family:inherit">Limpar</button>
       </div>
       <div class="total-pessoas" id="totalPorPessoa"></div>
-      <button class="btn-pagar" onclick="pagarSelecionados()">Confirmar pagamento selecionados</button>
+      <div style="display:flex;gap:6px">
+        <button class="btn-pagar" onclick="pagarSelecionados()" style="flex:1">Confirmar pagamento</button>
+        <button onclick="programarSelecionados()" style="flex:0;padding:11px 14px;background:var(--purple-l);border:1px solid var(--purple-m);border-radius:var(--rs);color:var(--purple);font-size:13px;font-weight:500;cursor:pointer;font-family:inherit;white-space:nowrap">📅 Programar</button>
+      </div>
     </div>
   </div>
 
@@ -595,6 +598,7 @@ async function atualizarContas(){
   document.getElementById('mesLabel').textContent=mesLabel(mesAtual.y,mesAtual.m);
   document.getElementById('todasContas').innerHTML='<div class="loading">Carregando...</div>';
   await carregarStatusMes(mesStr(mesAtual.y,mesAtual.m));
+  await carregarAgendamentos(mesStr(mesAtual.y,mesAtual.m));
   atualizarBenefFiltros();
   renderDias();
   document.getElementById('diaInfo').innerHTML='<div style="font-size:12px;color:var(--text3)">Toque num dia para ver as contas</div>';
@@ -700,12 +704,14 @@ function renderConta(c){
   }
   const chk='ci-check'+(e.selecionado?' on':'');
   const fbs=['llg','pes','crt'].map(f=>`<button class="forma-btn${e.forma===f?' on-'+f:''}" onclick="setForma(${c.id},'${f}')">${f==='llg'?'LLG':f==='crt'?'Cartão':'Pessoal'}</button>`).join('');
-  return `<div class="ci${e.pago?' pago':''}${e.selecionado?' sel-ci':''}" id="ci-${c.id}">
+  const agend = agendamentos[c.id];
+  const isAgendado = !!agend;
+  return `<div class="ci${e.pago?' pago':''}${e.selecionado?' sel-ci':''}${isAgendado?' agendado':''}" id="ci-${c.id}">
     <div class="ci-top">
       <div style="display:flex;gap:8px;align-items:flex-start">
         ${!e.pago?`<div class="${chk}" onclick="toggleSel(${c.id})"><svg viewBox="0 0 10 10" fill="none" stroke="#fff" stroke-width="2"><polyline points="1.5,5 4,7.5 8.5,2.5"/></svg></div>`:''}
         <div>
-          <div class="ci-nm">${c.nome}${bd}${parcBadge}</div>
+          <div class="ci-nm">${c.nome}${bd}${parcBadge}${isAgendado?`<span class="bdt" style="background:var(--purple-l);color:var(--purple)">📅 ${agend.data_programada}</span>`:''}</div>
           <div class="ci-dt">${c.beneficiario} · dia ${c.dia_vencimento}</div>
         </div>
       </div>
@@ -718,7 +724,10 @@ function renderConta(c){
       ?`<div class="ci-actions">
           <div class="ci-row"><label>Valor</label><input type="number" id="val-${c.id}" value="${Number(e.valorPago).toFixed(2)}" step="0.01"></div>
           <div class="ci-row"><label>Via</label><div class="forma-btns">${fbs}</div></div>
-          <button class="btn-ok" onclick="pagarConta(${c.id})">Confirmar pagamento</button>
+          <div style="display:flex;gap:6px">
+            <button class="btn-ok" onclick="pagarConta(${c.id})" style="flex:1">Confirmar pagamento</button>
+            <button onclick="programarConta(${c.id})" style="flex:0;padding:9px 12px;background:var(--purple-l);border:1px solid var(--purple-m);border-radius:var(--rs);color:var(--purple);font-size:12px;cursor:pointer;font-family:inherit;white-space:nowrap">${isAgendado?'✓ Agendado':'📅 Programar'}</button>
+          </div>
         </div>`
       :`<div class="pago-info">
           <span class="pago-badge ${formaBadge(e.forma)}">${formaLabel(e.forma)}</span>
@@ -726,6 +735,48 @@ function renderConta(c){
           <button class="btn-desfaz" onclick="desfazerPagamento(${c.id})">Desfazer</button>
         </div>`}
   </div>`;
+}
+
+let agendamentos = {};
+
+async function carregarAgendamentos(ms){
+  agendamentos = {};
+  const data = await sbGet('agendamentos', `select=*&mes=eq.${ms}`);
+  if(Array.isArray(data)) data.forEach(a => { agendamentos[a.conta_id] = a; });
+}
+
+async function programarConta(id){
+  const inp = document.getElementById('val-'+id);
+  const v = parseFloat(inp?.value || statusMes[id]?.valorPago) || statusMes[id]?.valorPago;
+  const c = contas.find(x=>x.id===id);
+  const ms = mesStr(mesAtual.y, mesAtual.m);
+  const dataProgr = `${String(c.dia_vencimento).padStart(2,'0')}/${String(mesAtual.m+1).padStart(2,'0')}/${mesAtual.y}`;
+  if(agendamentos[id]){
+    // Remover agendamento
+    await fetch(`${SB_URL}/rest/v1/agendamentos?conta_id=eq.${id}&mes=eq.${ms}`,{method:'DELETE',headers:SB_HDR});
+    delete agendamentos[id];
+    toast('Agendamento removido');
+  } else {
+    // Criar agendamento
+    await sbPost('agendamentos',{conta_id:id,mes:ms,valor:v,forma:statusMes[id]?.forma||c.forma_padrao,data_programada:dataProgr},'resolution=merge-duplicates');
+    agendamentos[id] = {conta_id:id,mes:ms,valor:v,forma:statusMes[id]?.forma,data_programada:dataProgr};
+    toast('Pagamento programado para '+dataProgr+'!');
+  }
+  renderTodasContas();
+}
+
+async function programarSelecionados(){
+  const ms = mesStr(mesAtual.y, mesAtual.m);
+  for(const c of contas.filter(c=>statusMes[c.id]?.selecionado)){
+    const inp = document.getElementById('val-'+c.id);
+    const v = parseFloat(inp?.value || statusMes[c.id]?.valorPago) || c.valor;
+    const dataProgr = `${String(c.dia_vencimento).padStart(2,'0')}/${String(mesAtual.m+1).padStart(2,'0')}/${mesAtual.y}`;
+    await sbPost('agendamentos',{conta_id:c.id,mes:ms,valor:v,forma:statusMes[c.id]?.forma||c.forma_padrao,data_programada:dataProgr},'resolution=merge-duplicates');
+    agendamentos[c.id] = {conta_id:c.id,mes:ms,valor:v,forma:statusMes[c.id]?.forma,data_programada:dataProgr};
+    statusMes[c.id].selecionado = false;
+  }
+  renderTodasContas();
+  toast('Pagamentos programados!');
 }
 
 function limparSelecao(){
