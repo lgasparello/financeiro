@@ -777,6 +777,10 @@ async function programarConta(id){
   modal.style.cssText = `position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;background:var(--bg);border-top:1px solid var(--border);border-radius:16px 16px 0 0;padding:16px;z-index:200;box-shadow:0 -4px 24px rgba(0,0,0,.15)`;
   modal.innerHTML = `
     <div style="font-size:13px;font-weight:600;margin-bottom:12px">📅 Programar — ${c.nome}</div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+      <label style="font-size:12px;color:var(--text3);white-space:nowrap">Valor:</label>
+      <input type="number" id="modalValProgr" value="${Number(v).toFixed(2)}" step="0.01" style="flex:1;padding:8px 10px;border-radius:var(--rs);border:1px solid var(--border2);background:var(--bg2);color:var(--text);font-size:13px;font-family:inherit">
+    </div>
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
       <label style="font-size:12px;color:var(--text3);white-space:nowrap">Data:</label>
       <input type="date" id="inputDataProgr" value="${dataDefault}" style="flex:1;padding:8px 10px;border-radius:var(--rs);border:1px solid var(--border2);background:var(--bg2);color:var(--text);font-size:13px;font-family:inherit">
@@ -799,7 +803,7 @@ async function confirmarProgramar(id){
   if(!dataISO) return;
   const parts = dataISO.split('-');
   const dataFmt = `${parts[2]}/${parts[1]}/${parts[0]}`;
-  const v = modal._valor;
+  const v = parseFloat(document.getElementById('modalValProgr')?.value) || modal._valor;
   const ms = modal._ms;
   const c = contas.find(x=>x.id===id);
   await sbPost('agendamentos',{conta_id:id,mes:ms,valor:v,forma:statusMes[id]?.forma||c.forma_padrao,data_programada:dataFmt},'resolution=merge-duplicates');
@@ -1025,6 +1029,7 @@ async function getLucroAnterior(y, m){
 }
 let componentesRet = [];
 let retiradaMes={};
+let agendRetMes = {};
 
 function mudarMesRet(d){
   mesRet.m+=d;
@@ -1052,10 +1057,16 @@ async function atualizarRetirada(){
   if(Array.isArray(retData)){
     retData.forEach(r=>{retiradaMes[r.componente]={valor:r.valor,enviado:r.enviado,data:r.data_envio,id:r.id};});
   }
+  agendRetMes={};
+  if(Array.isArray(agendRetRaw)){
+    agendRetRaw.forEach(a=>{
+      if(a.componente) agendRetMes[a.componente]={valor:a.valor,data:a.data_programada};
+    });
+  }
   const statusMesRet={};
   if(Array.isArray(pagsRetRaw)) pagsRetRaw.forEach(r=>{statusMesRet[r.conta_id]={pago:r.pago,valorPago:r.valor_pago};});
   const agendMesRet={};
-  if(Array.isArray(agendRetRaw)) agendRetRaw.forEach(a=>{agendMesRet[a.conta_id]={valor:a.valor};});
+  if(Array.isArray(agendRetRaw)) agendRetRaw.forEach(a=>{if(a.conta_id) agendMesRet[a.conta_id]={valor:a.valor};});
   const lucroAntRaw = await getLucroAnterior(mesRet.y, mesRet.m);
   const lucroAnt = Math.max(0, lucroAntRaw);
   renderRetirada(lucroAnt, lucroAntRaw, statusMesRet, agendMesRet);
@@ -1155,15 +1166,17 @@ function renderRetirada(lucroAnt=0, lucroAntRaw=0, statusMesRet={}, agendMesRet=
       if(new Date(mesRet.y,mesRet.m)>new Date(fy,fm-1))return;
     }
     const r=retiradaMes[c.chave];
-    const val=r?.valor||c.valor||0;
+    const agendRet=agendRetMes[c.chave];
+    const val=r?.valor||agendRet?.valor||c.valor||0;
     const env=r?.enviado||false;
+    const isAgendRet=!!agendRet&&!env;
     html+=`<div class="ret-card" id="retcard-${c.chave}">
       <div class="ret-top">
         <div style="display:flex;gap:8px;align-items:center">
           ${!env?`<div class="ci-check" id="retsel-${c.chave}" onclick="toggleRetSel('${c.chave}')"><svg viewBox="0 0 10 10" fill="none" stroke="#fff" stroke-width="2"><polyline points="1.5,5 4,7.5 8.5,2.5"/></svg></div>`:''}
-          <div class="ret-nome">${c.nome}</div>
+          <div class="ret-nome">${c.nome}${isAgendRet?`<span class="bdt" style="background:var(--purple-l);color:var(--purple);margin-left:4px">📅 ${agendRet.data}</span>`:''}</div>
         </div>
-        <span class="ret-status ${env?'ret-env':'ret-pend'}">${env?'Enviado':'Pendente'}</span>
+        <span class="ret-status ${env?'ret-env':isAgendRet?'ret-pend':'ret-pend'}">${env?'Enviado':isAgendRet?'Agendado':'Pendente'}</span>
       </div>
       ${!env?`
         <div class="ret-row" style="margin-top:8px">
@@ -1171,7 +1184,7 @@ function renderRetirada(lucroAnt=0, lucroAntRaw=0, statusMesRet={}, agendMesRet=
           <input type="date" id="ret-data-${c.chave}" value="${hoje.toISOString().split('T')[0]}">
         </div>
         <button class="btn-env" onclick="enviarRetirada('${c.chave}','${ms}')">Confirmar envio</button>
-        <button onclick="programarRetirada('${c.chave}','${ms}',${val})" style="margin-top:4px;width:100%;padding:7px;background:var(--purple-l);border:1px solid var(--purple-m);border-radius:var(--rs);color:var(--purple);font-size:12px;cursor:pointer;font-family:inherit">📅 Programar</button>
+        <button onclick="programarRetirada('${c.chave}','${ms}',${val})" style="margin-top:4px;width:100%;padding:7px;background:var(--purple-l);border:1px solid var(--purple-m);border-radius:var(--rs);color:var(--purple);font-size:12px;cursor:pointer;font-family:inherit">${isAgendRet?'✓ Agendado — clique para remover':'📅 Programar'}</button>
       `:`
         <div style="font-size:13px;color:var(--green);font-weight:500;margin-top:4px">${fmtV(val)} · ${r.data||''}</div>
         <button class="btn-env-d" onclick="desfazerRetirada('${c.chave}','${ms}')">Desfazer</button>
@@ -1207,6 +1220,14 @@ function atualizarTotalRet(){
 }
 
 async function programarRetirada(comp, ms, val){
+  // Se já agendado, remover
+  if(agendRetMes[comp]){
+    await fetch(`${SB_URL}/rest/v1/agendamentos?mes=eq.${ms}&componente=eq.${comp}`,{method:'DELETE',headers:SB_HDR});
+    delete agendRetMes[comp];
+    await atualizarRetirada();
+    toast('Agendamento removido');
+    return;
+  }
   const ano = ms.split('-')[0];
   const m = ms.split('-')[1];
   const dataDefault = `${ano}-${m}-05`;
@@ -1219,6 +1240,10 @@ async function programarRetirada(comp, ms, val){
   modal.style.cssText = `position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;background:var(--bg);border-top:1px solid var(--border);border-radius:16px 16px 0 0;padding:16px;z-index:200;box-shadow:0 -4px 24px rgba(0,0,0,.15)`;
   modal.innerHTML = `
     <div style="font-size:13px;font-weight:600;margin-bottom:12px">📅 Programar retirada — ${comp}</div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+      <label style="font-size:12px;color:var(--text3);white-space:nowrap">Valor:</label>
+      <input type="number" id="inputValProgrRet" value="${Number(val).toFixed(2)}" step="0.01" style="flex:1;padding:8px 10px;border-radius:var(--rs);border:1px solid var(--border2);background:var(--bg2);color:var(--text);font-size:13px;font-family:inherit">
+    </div>
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
       <label style="font-size:12px;color:var(--text3);white-space:nowrap">Data:</label>
       <input type="date" id="inputDataProgrRet" value="${dataDefault}" style="flex:1;padding:8px 10px;border-radius:var(--rs);border:1px solid var(--border2);background:var(--bg2);color:var(--text);font-size:13px;font-family:inherit">
@@ -1235,8 +1260,11 @@ async function confirmarProgramarRet(comp, ms, val){
   if(!dataISO) return;
   const parts = dataISO.split('-');
   const dataFmt = `${parts[2]}/${parts[1]}/${parts[0]}`;
-  await sbPost('agendamentos',{conta_id:null,mes:ms,valor:val,forma:'ret',data_programada:dataFmt,componente:comp},'resolution=merge-duplicates');
+  const valFinal = parseFloat(document.getElementById('inputValProgrRet')?.value)||val;
+  await sbPost('agendamentos',{mes:ms,valor:valFinal,forma:'ret',data_programada:dataFmt,componente:comp},'resolution=merge-duplicates');
+  agendRetMes[comp]={valor:valFinal,data:dataFmt};
   document.getElementById('modalProgr')?.remove();
+  await atualizarRetirada();
   toast('Retirada programada para '+dataFmt+'!');
 }
 
