@@ -1038,25 +1038,30 @@ async function atualizarRetirada(){
   document.getElementById('mesLabelRet').textContent=mesLabel(mesRet.y,mesRet.m);
   document.getElementById('retContent').innerHTML='<div class="loading">Carregando...</div>';
   const ms=mesStr(mesRet.y,mesRet.m);
-  // Carregar componentes do banco
   const compRaw = await sbGet('componentes_retirada','select=*&ativo=eq.true&order=id');
   componentesRet = Array.isArray(compRaw) ? compRaw : [];
-  // Adicionar lucros sempre
   if(!componentesRet.find(c=>c.chave==='lucros')){
     componentesRet.push({id:99,nome:'Lucros',chave:'lucros',valor:0,ativo:true,mes_fim:null});
   }
-  const data=await sbGet('retiradas',`select=*&mes=eq.${ms}`);
+  const [retData, pagsRetRaw, agendRetRaw] = await Promise.all([
+    sbGet('retiradas',`select=*&mes=eq.${ms}`),
+    sbGet('pagamentos_mes',`select=*&mes=eq.${ms}&pago=eq.true`),
+    sbGet('agendamentos',`select=*&mes=eq.${ms}`)
+  ]);
   retiradaMes={};
-  if(Array.isArray(data)){
-    data.forEach(r=>{retiradaMes[r.componente]={valor:r.valor,enviado:r.enviado,data:r.data_envio,id:r.id};});
+  if(Array.isArray(retData)){
+    retData.forEach(r=>{retiradaMes[r.componente]={valor:r.valor,enviado:r.enviado,data:r.data_envio,id:r.id};});
   }
-  // Lucro anterior dinâmico — mínimo R$0
+  const statusMesRet={};
+  if(Array.isArray(pagsRetRaw)) pagsRetRaw.forEach(r=>{statusMesRet[r.conta_id]={pago:r.pago,valorPago:r.valor_pago};});
+  const agendMesRet={};
+  if(Array.isArray(agendRetRaw)) agendRetRaw.forEach(a=>{agendMesRet[a.conta_id]={valor:a.valor};});
   const lucroAntRaw = await getLucroAnterior(mesRet.y, mesRet.m);
   const lucroAnt = Math.max(0, lucroAntRaw);
-  renderRetirada(lucroAnt, lucroAntRaw);
+  renderRetirada(lucroAnt, lucroAntRaw, statusMesRet, agendMesRet);
 }
 
-function renderRetirada(lucroAnt=0, lucroAntRaw=0){
+function renderRetirada(lucroAnt=0, lucroAntRaw=0, statusMesRet={}, agendMesRet={}){
   const ms=mesStr(mesRet.y,mesRet.m);
   const mAnterior=new Date(mesRet.y,mesRet.m-1);
 
@@ -1069,7 +1074,7 @@ function renderRetirada(lucroAnt=0, lucroAntRaw=0){
   const lucrosPrev=retiradaMes['lucros']?.valor||0;
   const excessoLucros=lucrosPrev>lucroAnt&&lucroAnt>=0;
 
-  // Calcular custos fixos pessoais do mês da retirada
+  // Calcular mínimo pessoal usando real > programado > previsto
   const contasPessoais = contas.filter(c=>{
     if(c.tipo!=='pessoal') return false;
     if(c.mes_fim){
@@ -1078,7 +1083,13 @@ function renderRetirada(lucroAnt=0, lucroAntRaw=0){
     }
     return true;
   });
-  const minimoRetirar = contasPessoais.reduce((s,c)=>s+c.valor,0);
+  const minimoRetirar = contasPessoais.reduce((s,c)=>{
+    const st = statusMesRet[c.id];
+    if(st?.pago) return s + (st.valorPago||c.valor);
+    const agend = agendMesRet[c.id];
+    if(agend) return s + (agend.valor||c.valor);
+    return s + c.valor;
+  },0);
 
   let html='';
 
@@ -1286,9 +1297,8 @@ async function enviarRetirada(comp,ms){
   const dataFmt=data?data.split('-').reverse().join('/'):'';
   await sbPost('retiradas',{componente:comp,mes:ms,valor:val,enviado:true,data_envio:dataFmt},'resolution=merge-duplicates');
   retiradaMes[comp]={valor:val,enviado:true,data:dataFmt};
-  dadosFinanceiros={}; // limpar cache
-  const lucroAnt = await getLucroAnterior(mesRet.y, mesRet.m);
-  renderRetirada(lucroAnt);
+  dadosFinanceiros={};
+  await atualizarRetirada();
   toast('Retirada confirmada!');
 }
 
@@ -1297,8 +1307,7 @@ async function desfazerRetirada(comp,ms){
   await sbPost('retiradas',{componente:comp,mes:ms,valor:val,enviado:false},'resolution=merge-duplicates');
   retiradaMes[comp]={...retiradaMes[comp],enviado:false};
   dadosFinanceiros={};
-  const lucroAnt = await getLucroAnterior(mesRet.y, mesRet.m);
-  renderRetirada(lucroAnt);
+  await atualizarRetirada();
   toast('Desfeito');
 }
 
