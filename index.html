@@ -728,6 +728,11 @@ function renderConta(c){
   </div>`;
 }
 
+function limparSelecao(){
+  contas.forEach(c=>{if(statusMes[c.id])statusMes[c.id].selecionado=false;});
+  renderTodasContas();
+}
+
 function toggleSel(id){
   if(statusMes[id]?.pago)return;
   if(!statusMes[id])statusMes[id]={pago:false,valorPago:contas.find(c=>c.id===id)?.valor,forma:'pes',selecionado:false};
