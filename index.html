@@ -1069,7 +1069,40 @@ function renderRetirada(lucroAnt=0, lucroAntRaw=0){
   const lucrosPrev=retiradaMes['lucros']?.valor||0;
   const excessoLucros=lucrosPrev>lucroAnt&&lucroAnt>=0;
 
+  // Calcular custos fixos pessoais do mês atual
+  const contasPessoais = contas.filter(c=>{
+    if(c.tipo!=='pessoal') return false;
+    if(c.mes_fim){
+      const[fy,fm]=c.mes_fim.split('-').map(Number);
+      if(new Date(mesRet.y,mesRet.m)>new Date(fy,fm-1)) return false;
+    }
+    return true;
+  });
+  const totalPessoal = contasPessoais.reduce((s,c)=>s+c.valor,0);
+  const fixosRet = componentesRet.filter(c=>c.chave!=='lucros').reduce((s,c)=>s+c.valor,0);
+  const minimoRetirar = totalPessoal + fixosRet;
+
   let html='';
+
+  // Aviso se mês anterior foi negativo
+  if(lucroAntRaw<0){
+    html+=`<div style="background:var(--red-l);border:1px solid var(--red-m);border-radius:var(--rs);padding:8px 12px;margin-bottom:10px;font-size:12px;color:var(--red)">
+      ⚠ ${MESES_PT[mAnterior.getMonth()]} teve prejuízo de ${fmtV(Math.abs(lucroAntRaw))}. Limite de lucros = R$0,00.
+    </div>`;
+  }
+
+  // Card mínimo a retirar
+  html+=`<div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:var(--r);padding:11px 13px;margin-bottom:12px">
+    <div style="font-size:11px;font-weight:600;color:var(--blue);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">💡 Mínimo para cobrir custos pessoais</div>
+    <div style="font-size:20px;font-weight:700;color:var(--blue);margin-bottom:8px">${fmtV(minimoRetirar)}</div>
+    <div style="display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--text2)">
+      <div style="display:flex;justify-content:space-between"><span>Contas fixas pessoais</span><span>${fmtV(totalPessoal)}</span></div>
+      <div style="display:flex;justify-content:space-between"><span>Pro Labore + Plano + Moto</span><span>${fmtV(fixosRet)}</span></div>
+    </div>
+    ${totalEnv>0?`<div style="margin-top:8px;font-size:12px;color:var(--${totalEnv>=minimoRetirar?'green':'red'})">
+      ${totalEnv>=minimoRetirar?'✅ Retirada suficiente':'⚠ Faltam '+fmtV(minimoRetirar-totalEnv)}
+    </div>`:''}
+  </div>`;
 
   // Aviso se mês anterior foi negativo
   if(lucroAntRaw<0){
