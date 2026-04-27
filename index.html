@@ -1051,7 +1051,7 @@ async function atualizarRetirada(){
   const [retData, pagsRetRaw, agendRetRaw] = await Promise.all([
     sbGet('retiradas',`select=*&mes=eq.${ms}`),
     sbGet('pagamentos_mes',`select=*&mes=eq.${ms}&pago=eq.true`),
-    sbGet('agendamentos',`select=*&mes=eq.${ms}`)
+    sbGet('agendamentos',`select=*&mes=eq.${ms}&forma=eq.ret`)
   ]);
   retiradaMes={};
   if(Array.isArray(retData)){
@@ -1066,7 +1066,8 @@ async function atualizarRetirada(){
   const statusMesRet={};
   if(Array.isArray(pagsRetRaw)) pagsRetRaw.forEach(r=>{statusMesRet[r.conta_id]={pago:r.pago,valorPago:r.valor_pago};});
   const agendMesRet={};
-  if(Array.isArray(agendRetRaw)) agendRetRaw.forEach(a=>{if(a.conta_id) agendMesRet[a.conta_id]={valor:a.valor};});
+  const agendContasRaw = await sbGet('agendamentos',`select=*&mes=eq.${ms}&forma=neq.ret`);
+  if(Array.isArray(agendContasRaw)) agendContasRaw.forEach(a=>{if(a.conta_id) agendMesRet[a.conta_id]={valor:a.valor};});
   const lucroAntRaw = await getLucroAnterior(mesRet.y, mesRet.m);
   const lucroAnt = Math.max(0, lucroAntRaw);
   renderRetirada(lucroAnt, lucroAntRaw, statusMesRet, agendMesRet);
@@ -1145,12 +1146,15 @@ function renderRetirada(lucroAnt=0, lucroAntRaw=0, statusMesRet={}, agendMesRet=
   html+=`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:11px 13px;margin-bottom:12px">
     <div style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">Composição</div>
     ${componentesRet.map(c=>{
-      const v=retiradaMes[c.chave]?.enviado?retiradaMes[c.chave].valor:0;
+      const env=retiradaMes[c.chave]?.enviado;
+      const agendRet=agendRetMes[c.chave];
+      const v=env?retiradaMes[c.chave].valor:agendRet?agendRet.valor:0;
       const isLucros=c.chave==='lucros';
       const cor=isLucros&&excessoLucros?'var(--red)':'var(--text)';
+      const suffix=!env&&agendRet?' 📅':env?'':' —';
       return `<div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-bottom:1px solid var(--border)">
         <span style="color:var(--text2)">${c.nome}</span>
-        <span style="font-weight:500;color:${cor}">${fmtV(v)}${isLucros&&excessoLucros?' ⚠':''}</span>
+        <span style="font-weight:500;color:${cor}">${v>0?fmtV(v):'R$0,00'}${suffix}${isLucros&&excessoLucros?' ⚠':''}</span>
       </div>`;
     }).join('')}
     <div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;font-weight:600">
