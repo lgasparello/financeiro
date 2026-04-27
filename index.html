@@ -826,25 +826,30 @@ async function calcularMes(ms){
   const totalImpostos = impostos.reduce((s,i)=>s+i.valor,0);
   const totalRetirado = retiradas.reduce((s,r)=>s+r.valor,0);
 
-  // CF = apenas contas fixas tipo empresa pagas (operacional)
+  // CF = contas fixas empresa pagas (operacional)
   const cfEmpresa = pagamentos
     .filter(p=>{ const c=contas.find(x=>x.id===p.conta_id); return c&&c.tipo==='empresa'; })
     .reduce((s,p)=>{ const c=contas.find(x=>x.id===p.conta_id); return s+(p.valor_pago||c?.valor||0); },0);
+
+  // CF via retiradas fixas (Pro Labore, Plano, Moto) — não estão mais nas Contas mas são custo real
+  const cfRetiradas = retiradas
+    .filter(r=>r.componente!=='lucros')
+    .reduce((s,r)=>s+r.valor,0);
 
   // CV = gastos variáveis empresa
   const cvEmpresa = gastos
     .filter(g=>g.conta==='empresa')
     .reduce((s,g)=>s+g.valor,0);
 
-  // Lucro = Receita - CF operacional - CV - Impostos
-  // Retiradas NÃO entram no cálculo do lucro
-  const lucroLiq = totalReceita - cfEmpresa - cvEmpresa - totalImpostos;
+  // Lucro = Receita - CF operacional - CF retiradas fixas - CV - Impostos
+  const cfTotal = cfEmpresa + cfRetiradas;
+  const lucroLiq = totalReceita - cfTotal - cvEmpresa - totalImpostos;
 
-  console.log(`[${ms}] Receita:${totalReceita} CF:${cfEmpresa} CV:${cvEmpresa} Imp:${totalImpostos} Lucro:${lucroLiq}`);
+  console.log(`[${ms}] Receita:${totalReceita} CF:${cfEmpresa} CFRet:${cfRetiradas} CV:${cvEmpresa} Imp:${totalImpostos} Lucro:${lucroLiq}`);
 
   const result = {
     receita: totalReceita, impostos: totalImpostos,
-    cf: cfEmpresa, cv: cvEmpresa,
+    cf: cfTotal, cv: cvEmpresa,
     lucro: lucroLiq, retirado: totalRetirado,
     receitaItens: receitas, impostosItens: impostos
   };
