@@ -1069,7 +1069,7 @@ function renderRetirada(lucroAnt=0, lucroAntRaw=0){
   const lucrosPrev=retiradaMes['lucros']?.valor||0;
   const excessoLucros=lucrosPrev>lucroAnt&&lucroAnt>=0;
 
-  // Calcular custos fixos pessoais do mês atual
+  // Calcular custos fixos pessoais do mês da retirada
   const contasPessoais = contas.filter(c=>{
     if(c.tipo!=='pessoal') return false;
     if(c.mes_fim){
@@ -1078,8 +1078,7 @@ function renderRetirada(lucroAnt=0, lucroAntRaw=0){
     }
     return true;
   });
-  const totalPessoal = contasPessoais.reduce((s,c)=>s+c.valor,0);
-  const minimoRetirar = totalPessoal;
+  const minimoRetirar = contasPessoais.reduce((s,c)=>s+c.valor,0);
 
   let html='';
 
@@ -1091,14 +1090,14 @@ function renderRetirada(lucroAnt=0, lucroAntRaw=0){
   }
 
   // Card mínimo a retirar
-  html+=`<div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:var(--r);padding:11px 13px;margin-bottom:12px">
-    <div style="font-size:11px;font-weight:600;color:var(--blue);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">💡 Mínimo para cobrir contas pessoais</div>
-    <div style="font-size:20px;font-weight:700;color:var(--blue);margin-bottom:8px">${fmtV(minimoRetirar)}</div>
-    <div style="display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--text2)">
-      ${contasPessoais.map(c=>`<div style="display:flex;justify-content:space-between"><span>${c.nome}</span><span>${fmtV(c.valor)}</span></div>`).join('')}
+  const diffMinimo = totalEnv - minimoRetirar;
+  html+=`<div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:var(--r);padding:11px 13px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
+    <div>
+      <div style="font-size:11px;font-weight:600;color:var(--blue);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px">💡 Mínimo para cobrir contas pessoais</div>
+      <div style="font-size:20px;font-weight:700;color:var(--blue)">${fmtV(minimoRetirar)}</div>
     </div>
-    ${totalEnv>0?`<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:12px;color:var(--${totalEnv>=minimoRetirar?'green':'red'})">
-      ${totalEnv>=minimoRetirar?'✅ Retirada suficiente':'⚠ Faltam '+fmtV(minimoRetirar-totalEnv)+' para cobrir contas pessoais'}
+    ${totalEnv>0?`<div style="font-size:12px;font-weight:500;color:var(--${diffMinimo>=0?'green':'red'});text-align:right">
+      ${diffMinimo>=0?'✅ OK':'⚠ Faltam<br>'+fmtV(Math.abs(diffMinimo))}
     </div>`:''}
   </div>`;
 
