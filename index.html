@@ -184,6 +184,31 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .loading{text-align:center;color:var(--text3);padding:20px;font-size:13px}
 .toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:8px 16px;border-radius:20px;font-size:12px;font-weight:500;z-index:100;opacity:0;transition:opacity .2s;pointer-events:none;white-space:nowrap}
 .toast.show{opacity:1}
+
+/* === LAYOUT PC (≥1024px) === */
+@media (min-width: 1024px){
+  body{padding:20px 0}
+  .app{max-width:1280px;border-radius:14px;box-shadow:0 4px 24px rgba(0,0,0,.06);min-height:auto;overflow:hidden}
+  @media (prefers-color-scheme: dark){.app{box-shadow:0 4px 24px rgba(0,0,0,.4)}}
+  .scr{padding:20px 24px}
+  .mes-row{padding:14px 24px}
+  .filtro-row{padding:10px 24px}
+  /* Total bar flutuante: ilha centralizada (não estica) */
+  .total-bar{max-width:480px;border-radius:16px;bottom:20px;border:1px solid var(--border);box-shadow:0 6px 28px rgba(0,0,0,.18)}
+  /* Aba Contas: 2 colunas (Pendentes | Pagas) */
+  .contas-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}
+  /* Aba Relatório: 3 colunas */
+  .rel-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;align-items:start}
+  /* Painel: cards em 4 colunas */
+  .grid2{grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+  /* Aba Gráficos: gráficos em 2 colunas */
+  #pnl-graficos .scr{display:grid;grid-template-columns:1fr 1fr;gap:16px;column-gap:24px}
+  #pnl-graficos .scr > .sh{grid-column:1/-1}
+  /* Aba Chat IA: centraliza mais estreito */
+  #pnl-chat .msgs,#pnl-chat .sugs,#pnl-chat .inp-row,#pnl-chat #gastoRapidoChat{max-width:720px;width:100%;margin-left:auto;margin-right:auto}
+  /* Aba Retirada: composição em mais colunas */
+  #pnl-retirada .scr{max-width:880px;margin-left:auto;margin-right:auto;width:100%}
+}
 </style>
 </head>
 <body>
@@ -317,21 +342,29 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
           <option value="all">Todos os meses</option>
         </select>
       </div>
-      <div class="sh" style="margin-top:0">Parcelamentos ativos</div>
-      <div id="relParcelamentos"></div>
-      <div class="sh">Total pago por beneficiário</div>
-      <div id="relBeneficiario"><div class="loading">Carregando...</div></div>
-      <div class="sh">Gastos variáveis por categoria</div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
-        <button class="fbtn on-all" id="catBtn-all" onclick="filtrarCat('all',this)">Todos</button>
-        <button class="fbtn" id="catBtn-alim" onclick="filtrarCat('Alimentação',this)">Alimentação</button>
-        <button class="fbtn" id="catBtn-comb" onclick="filtrarCat('Combustível',this)">Combustível</button>
-        <button class="fbtn" id="catBtn-laz" onclick="filtrarCat('Lazer',this)">Lazer</button>
-        <button class="fbtn" id="catBtn-pet" onclick="filtrarCat('Pet',this)">Pet</button>
-        <button class="fbtn" id="catBtn-comp" onclick="filtrarCat('Compras',this)">Compras</button>
-        <button class="fbtn" id="catBtn-out" onclick="filtrarCat('Outros',this)">Outros</button>
+      <div class="rel-grid">
+        <div class="rel-col">
+          <div class="sh" style="margin-top:0">Parcelamentos ativos</div>
+          <div id="relParcelamentos"></div>
+        </div>
+        <div class="rel-col">
+          <div class="sh" style="margin-top:0">Total pago por beneficiário</div>
+          <div id="relBeneficiario"><div class="loading">Carregando...</div></div>
+        </div>
+        <div class="rel-col">
+          <div class="sh" style="margin-top:0">Gastos variáveis por categoria</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+            <button class="fbtn on-all" id="catBtn-all" onclick="filtrarCat('all',this)">Todos</button>
+            <button class="fbtn" id="catBtn-alim" onclick="filtrarCat('Alimentação',this)">Alimentação</button>
+            <button class="fbtn" id="catBtn-comb" onclick="filtrarCat('Combustível',this)">Combustível</button>
+            <button class="fbtn" id="catBtn-laz" onclick="filtrarCat('Lazer',this)">Lazer</button>
+            <button class="fbtn" id="catBtn-pet" onclick="filtrarCat('Pet',this)">Pet</button>
+            <button class="fbtn" id="catBtn-comp" onclick="filtrarCat('Compras',this)">Compras</button>
+            <button class="fbtn" id="catBtn-out" onclick="filtrarCat('Outros',this)">Outros</button>
+          </div>
+          <div id="relGastos"><div class="loading">Carregando...</div></div>
+        </div>
       </div>
-      <div id="relGastos"><div class="loading">Carregando...</div></div>
       <div style="margin-top:12px">
         <button onclick="gerarJSON()" style="width:100%;padding:10px;background:var(--blue-l);border:1px solid var(--blue-m);border-radius:var(--rs);color:var(--blue);font-size:13px;font-weight:500;cursor:pointer;font-family:inherit">Gerar JSON para agente Excel ↗</button>
       </div>
@@ -709,18 +742,25 @@ function renderTodasContas(){
   const pend=lista.filter(c=>!statusMes[c.id]?.pago).sort((a,b)=>a.dia_vencimento-b.dia_vencimento);
   const pagos=lista.filter(c=>statusMes[c.id]?.pago).sort((a,b)=>a.dia_vencimento-b.dia_vencimento);
   const totalPend=pend.reduce((s,c)=>s+(statusMes[c.id]?.valorPago||c.valor),0);
-  let html='';
+  let html='<div class="contas-grid">';
+  // Coluna 1: Pendentes
+  html+='<div class="col-pend">';
   if(pend.length){
     html+=`<div class="sec-hd pend"><span>Pendentes — ${pend.length}</span><span>${fmtV(totalPend)}</span></div>`;
     pend.forEach(c=>{html+=renderConta(c);});
   }else{
     html+=`<div class="sec-hd pago-hd"><span>Todas pagas!</span><span>0 pendentes</span></div>`;
   }
+  html+='</div>';
+  // Coluna 2: Pagas
+  html+='<div class="col-pagos">';
   if(pagos.length){
-    html+=`<div class="sec-hd pago-hd"><span>Pagas — ${pagos.length}</span></div>`;
+    html+=`<div class="sec-hd pago-hd" style="margin-top:0"><span>Pagas — ${pagos.length}</span></div>`;
     pagos.forEach(c=>{html+=renderConta(c);});
   }
-  document.getElementById('todasContas').innerHTML=html||'<div class="empty">Nenhuma conta neste filtro.</div>';
+  html+='</div>';
+  html+='</div>';
+  document.getElementById('todasContas').innerHTML=(pend.length||pagos.length)?html:'<div class="empty">Nenhuma conta neste filtro.</div>';
   renderTotalBar();
 }
 
