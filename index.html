@@ -447,7 +447,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   </div>
 
   <!-- PAINEL -->
-  <div id="pnl-painel" class="pnl">
+  <div id="pnl-painel" class="pnl" style="flex-direction:column">
+    <div class="mes-row">
+      <button class="mes-btn" onclick="mudarMesPainel(-1)">&#8249;</button>
+      <div class="mes-label" id="mesLabelPainel">...</div>
+      <button class="mes-btn" onclick="mudarMesPainel(1)">&#8250;</button>
+      <button class="mes-hoje-btn" onclick="irParaHojePainel()">Hoje</button>
+      <button class="mes-hoje-btn" onclick="carregarPainel()" title="Recarregar dados" style="background:var(--bg2);color:var(--text2)">↻</button>
+    </div>
     <div class="scr">
       <div class="sh" style="margin-top:0">Saldos reais — <span id="painelData">carregando...</span></div>
       <div class="grid2">
@@ -505,6 +512,7 @@ const hoje=new Date();
 const DIA_HOJE=hoje.getDate();
 let mesAtual={y:hoje.getFullYear(),m:hoje.getMonth()};
 let mesRet={y:hoje.getFullYear(),m:hoje.getMonth()};
+let mesPainel={y:hoje.getFullYear(),m:hoje.getMonth()};
 
 const MESES_PT=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 function mesStr(y,m){return `${y}-${String(m+1).padStart(2,'0')}`;}
@@ -1056,9 +1064,12 @@ async function calcularMes(ms){
 
 async function carregarPainel(){
   dadosFinanceiros = {}; // limpar cache para recalcular
-  const ms = mesStr(mesAtual.y, mesAtual.m);
-  const mAnterior = new Date(mesAtual.y, mesAtual.m-1);
+  const ms = mesStr(mesPainel.y, mesPainel.m);
+  const mAnterior = new Date(mesPainel.y, mesPainel.m-1);
   const msAnt = mesStr(mAnterior.getFullYear(), mAnterior.getMonth());
+  // Atualizar label do navegador de mes
+  const lblPainel = document.getElementById('mesLabelPainel');
+  if(lblPainel) lblPainel.textContent = mesLabel(mesPainel.y, mesPainel.m);
 
   const [dadosMes, dadosAnt] = await Promise.all([
     calcularMes(ms),
@@ -1066,9 +1077,9 @@ async function carregarPainel(){
   ]);
 
   // Acumulado do ano atual (jan até mês corrente — dinâmico)
-  const anoAtual = mesAtual.y;
+  const anoAtual = mesPainel.y;
   let lucroAcum = 0;
-  for(let m=0; m<=mesAtual.m; m++){
+  for(let m=0; m<=mesPainel.m; m++){
     const d = await calcularMes(mesStr(anoAtual, m));
     lucroAcum += d.lucro;
   }
@@ -1100,7 +1111,7 @@ async function carregarPainel(){
   const retiradasPes = await sbGet('retiradas', `select=*&mes=eq.${ms}&enviado=eq.true`);
   const totalRetPes = Array.isArray(retiradasPes) ? retiradasPes.reduce((s,r)=>s+r.valor,0) : 0;
 
-  const labelMes = mesLabel(mesAtual.y, mesAtual.m);
+  const labelMes = mesLabel(mesPainel.y, mesPainel.m);
   const limiteRetirada = dadosAnt.lucro;
 
   // Helper pra mostrar diff vs mês anterior
@@ -1127,10 +1138,7 @@ async function carregarPainel(){
   const temAgendamentos = totalAgendPes > 0 || totalRetAgendadas > 0;
 
   document.getElementById('painelMesEmpresa').innerHTML=`
-    <div class="sh" style="display:flex;justify-content:space-between;align-items:center">
-      <span>${labelMes} — empresa</span>
-      <button onclick="carregarPainel()" title="Recarregar dados" style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:4px 10px;font-size:11px;color:var(--text2);cursor:pointer;font-family:inherit">↻ Atualizar</button>
-    </div>
+    <div class="sh">${labelMes} — empresa</div>
     <div class="grid2">
       <div class="mc"><div class="mc-lbl">Receita</div><div class="mc-val" style="color:var(--blue)">${fmtV(dadosMes.receita)}</div>${diffStrPositivo(dadosMes.receita, dadosAnt.receita)}</div>
       <div class="mc"><div class="mc-lbl">Lucro líquido</div><div class="mc-val" style="color:${dadosMes.lucro>=0?'var(--green)':'var(--red)'}">${fmtV(dadosMes.lucro)}</div>${diffStrPositivo(dadosMes.lucro, dadosAnt.lucro)}</div>
@@ -1163,7 +1171,7 @@ async function carregarPainel(){
   document.getElementById('painelAcumulado').innerHTML=`
     <div class="sh">Acumulado ${anoAtual}</div>
     <div class="grid2">
-      <div class="mc"><div class="mc-lbl">Lucro empresa (jan–${MESES_PT[mesAtual.m].slice(0,3).toLowerCase()})</div><div class="mc-val" style="color:${lucroAcum>=0?'var(--green)':'var(--red)'}">${fmtV(lucroAcum)}</div></div>
+      <div class="mc"><div class="mc-lbl">Lucro empresa (jan–${MESES_PT[mesPainel.m].slice(0,3).toLowerCase()})</div><div class="mc-val" style="color:${lucroAcum>=0?'var(--green)':'var(--red)'}">${fmtV(lucroAcum)}</div></div>
       <div class="mc"><div class="mc-lbl">Saldo pessoal atual</div><div class="mc-val" style="color:${saldos.pessoal>=0?'var(--blue)':'var(--red)'}">${fmtV(saldos.pessoal)}</div></div>
     </div>`;
 }
@@ -1186,6 +1194,14 @@ function mudarMesRet(d){
   atualizarRetirada();
 }
 function irParaHojeRet(){mesRet={y:hoje.getFullYear(),m:hoje.getMonth()};atualizarRetirada();}
+
+function mudarMesPainel(d){
+  mesPainel.m+=d;
+  if(mesPainel.m>11){mesPainel.m=0;mesPainel.y++;}
+  if(mesPainel.m<0){mesPainel.m=11;mesPainel.y--;}
+  carregarPainel();
+}
+function irParaHojePainel(){mesPainel={y:hoje.getFullYear(),m:hoje.getMonth()};carregarPainel();}
 
 async function atualizarRetirada(){
   document.getElementById('mesLabelRet').textContent=mesLabel(mesRet.y,mesRet.m);
