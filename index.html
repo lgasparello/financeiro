@@ -751,8 +751,8 @@ function renderConta(c){
         <div class="ci-vl${e.pago?' ptxt':''}">${fmtV(valorExibido)}</div>
         <span class="vc ${vcls}">${vlbl}</span>
         ${!e.pago?(isAgendado
-          ?`<button onclick="pagarRapido(${c.id})" title="Confirmar pagamento" style="display:block;margin-top:4px;background:var(--blue);border:1px solid var(--blue);border-radius:var(--rs);padding:3px 8px;font-size:10px;color:#fff;cursor:pointer;font-family:inherit;font-weight:600">✅ Confirmar</button>`
-          :`<button onclick="pagarRapido(${c.id})" title="Pagar com forma padrão" style="display:block;margin-top:4px;background:var(--green-l);border:1px solid var(--green-m);border-radius:var(--rs);padding:3px 8px;font-size:10px;color:var(--green);cursor:pointer;font-family:inherit;font-weight:600">⚡ Pagar</button>`
+          ?`<button id="quickBtn-${c.id}" onclick="pagarRapido(${c.id})" title="Confirmar pagamento" style="display:block;margin-top:4px;background:var(--blue);border:1px solid var(--blue);border-radius:var(--rs);padding:3px 8px;font-size:10px;color:#fff;cursor:pointer;font-family:inherit;font-weight:600">✅ Confirmar</button>`
+          :`<button id="quickBtn-${c.id}" onclick="pagarRapido(${c.id})" title="Pagar com forma padrão" style="display:block;margin-top:4px;background:var(--green-l);border:1px solid var(--green-m);border-radius:var(--rs);padding:3px 8px;font-size:10px;color:var(--green);cursor:pointer;font-family:inherit;font-weight:600">⚡ Pagar</button>`
         ):''}
       </div>
     </div>
@@ -783,13 +783,16 @@ function renderConta(c){
 function toggleEditConta(id){
   const area = document.getElementById('editArea-'+id);
   const btn = document.getElementById('editBtn-'+id);
+  const quickBtn = document.getElementById('quickBtn-'+id);
   if(!area || !btn) return;
   if(area.style.display === 'none'){
     area.style.display = 'block';
     btn.style.display = 'none';
+    if(quickBtn) quickBtn.style.display = 'none';
   } else {
     area.style.display = 'none';
     btn.style.display = 'block';
+    if(quickBtn) quickBtn.style.display = 'block';
   }
 }
 
