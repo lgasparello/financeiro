@@ -537,17 +537,25 @@ let filtro='all';
 let diaSel=null;
 let benefFiltro='';
 
+// Verifica se conta está ativa no mês especificado (considera mes_inicio e mes_fim)
+function contaAtivaNoMes(c, y, m){
+  const mesRef = new Date(y, m);
+  if(c.mes_inicio){
+    const [iy,im] = c.mes_inicio.split('-').map(Number);
+    if(mesRef < new Date(iy, im-1)) return false;
+  }
+  if(c.mes_fim){
+    const [fy,fm] = c.mes_fim.split('-').map(Number);
+    if(mesRef > new Date(fy, fm-1)) return false;
+  }
+  return true;
+}
+
 function contasFiltradas(){
-  const ms=mesStr(mesAtual.y,mesAtual.m);
   return contas.filter(c=>{
     if(filtro!=='all'&&c.tipo!==filtro)return false;
     if(benefFiltro&&c.beneficiario!==benefFiltro)return false;
-    if(c.mes_fim){
-      const [fy,fm]=c.mes_fim.split('-').map(Number);
-      const fim=new Date(fy,fm-1);
-      const mes=new Date(mesAtual.y,mesAtual.m);
-      if(mes>fim)return false;
-    }
+    if(!contaAtivaNoMes(c, mesAtual.y, mesAtual.m)) return false;
     return true;
   });
 }
@@ -563,10 +571,7 @@ function setBenefFiltro(benef, btn){
 function atualizarBenefFiltros(){
   const lista = contas.filter(c=>{
     if(filtro!=='all'&&c.tipo!==filtro)return false;
-    if(c.mes_fim){
-      const[fy,fm]=c.mes_fim.split('-').map(Number);
-      if(new Date(mesAtual.y,mesAtual.m)>new Date(fy,fm-1))return false;
-    }
+    if(!contaAtivaNoMes(c, mesAtual.y, mesAtual.m)) return false;
     return true;
   });
   const beneficiarios=[...new Set(lista.map(c=>c.beneficiario))].sort();
@@ -1253,10 +1258,7 @@ function renderRetirada(lucroAnt=0, lucroAntRaw=0, statusMesRet={}, agendMesRet=
   // Calcular mínimo pessoal usando real > programado > previsto
   const contasPessoais = contas.filter(c=>{
     if(c.tipo!=='pessoal') return false;
-    if(c.mes_fim){
-      const[fy,fm]=c.mes_fim.split('-').map(Number);
-      if(new Date(mesRet.y,mesRet.m)>new Date(fy,fm-1)) return false;
-    }
+    if(!contaAtivaNoMes(c, mesRet.y, mesRet.m)) return false;
     return true;
   });
   const minimoRetirar = contasPessoais.reduce((s,c)=>{
@@ -1745,9 +1747,10 @@ function setMesGastoFiltro(mes){
 async function montarSysPrompt(){
   // Lista de contas atuais
   const contasStr = contas.map(c=>{
-    const fim = c.mes_fim ? ` (até ${c.mes_fim})` : '';
+    const inicio = c.mes_inicio ? ` desde ${c.mes_inicio}` : '';
+    const fim = c.mes_fim ? `, até ${c.mes_fim}` : '';
     const cartao = c.forma_padrao==='crt' ? ', cartão' : '';
-    return `${c.id}: ${c.nome} → ${c.beneficiario}: ${fmtV(c.valor)}/mês, dia ${c.dia_vencimento}, ${c.tipo}${cartao}${fim}`;
+    return `${c.id}: ${c.nome} → ${c.beneficiario}: ${fmtV(c.valor)}/mês, dia ${c.dia_vencimento}, ${c.tipo}${cartao}${inicio}${fim}`;
   }).join('\n');
 
   // Lucros reais dos últimos 4 meses
@@ -1783,10 +1786,14 @@ AÇÕES DISPONÍVEIS — responda SOMENTE o JSON correspondente, sem markdown:
 {"a":"reg","desc":"nome","valor":0.00,"conta":"empresa|pessoal","mes":"Abril","cat":"Custo Variável|Custo Fixo|Imposto|Retirada|Receita","cc":"cv|cf|im|rc","forma":"deb|crt","msg":"confirmação"}
 
 2. ADICIONAR CONTA RECORRENTE:
-{"a":"add_recorrente","desc":"nome","beneficiario":"credor","valor":0.00,"conta":"empresa|pessoal","dia":5,"msg":"confirmação"}
+mes_inicio é o primeiro mês em que a conta aparece (formato "YYYY-MM"). Se não informado pelo usuário, use o mês atual.
+mes_fim é o último mês em que a conta aparece (opcional, deixe null se for indefinida).
+Se a conta é pontual (ex: "lançar só em abril"), use mes_inicio E mes_fim com o mesmo mês.
+Se é parcelada (ex: "parcelar em 2x abril e maio"), use mes_inicio do primeiro mês e mes_fim do último.
+{"a":"add_recorrente","desc":"nome","beneficiario":"credor","valor":0.00,"conta":"empresa|pessoal","dia":5,"mes_inicio":"YYYY-MM","mes_fim":"YYYY-MM ou null","msg":"confirmação"}
 
-3. EDITAR CONTA EXISTENTE (mudar valor, dia, beneficiário):
-{"a":"edit_conta","id":0,"campo":"valor|dia_vencimento|beneficiario|nome","valor_novo":"novo valor","msg":"confirmação"}
+3. EDITAR CONTA EXISTENTE (mudar valor, dia, beneficiário, mes_inicio, mes_fim):
+{"a":"edit_conta","id":0,"campo":"valor|dia_vencimento|beneficiario|nome|mes_inicio|mes_fim","valor_novo":"novo valor","msg":"confirmação"}
 
 4. DESATIVAR CONTA (encerrar pagamento):
 {"a":"desativar_conta","id":0,"msg":"confirmação"}
@@ -1902,9 +1909,24 @@ async function processarAcaoChat(parsed){
     toast('Gasto registrado!');
 
   } else if(parsed.a==='add_recorrente'){
-    await sbPost('contas_fixas',{nome:parsed.desc,beneficiario:parsed.beneficiario||parsed.desc,valor:parsed.valor,dia_vencimento:parsed.dia||5,tipo:parsed.conta==='empresa'?'empresa':'pessoal',forma_padrao:parsed.conta==='empresa'?'llg':'pes',categoria:'outros',ativo:true});
-    await carregarContas();await carregarStatusMes(mesStr(mesAtual.y,mesAtual.m));renderDias();renderTodasContas();
-    addMsg(`✅ <b>${parsed.desc}</b> adicionada!<br>${fmtV(parsed.valor)}/mês · dia ${parsed.dia} · ${parsed.conta==='empresa'?'LLG':'Pessoal'}`,'g');
+    const novaConta = {
+      nome: parsed.desc,
+      beneficiario: parsed.beneficiario||parsed.desc,
+      valor: parsed.valor,
+      dia_vencimento: parsed.dia||5,
+      tipo: parsed.conta==='empresa'?'empresa':'pessoal',
+      forma_padrao: parsed.conta==='empresa'?'llg':'pes',
+      categoria: 'outros',
+      ativo: true,
+      mes_inicio: parsed.mes_inicio || mesStr(mesAtual.y, mesAtual.m),
+      mes_fim: parsed.mes_fim || null
+    };
+    await sbPost('contas_fixas', novaConta);
+    await carregarContas(); await carregarStatusMes(mesStr(mesAtual.y,mesAtual.m)); renderDias(); renderTodasContas();
+    let detalhes = `${fmtV(parsed.valor)}/mês · dia ${parsed.dia||5} · ${parsed.conta==='empresa'?'LLG':'Pessoal'}`;
+    if(parsed.mes_inicio === parsed.mes_fim && parsed.mes_inicio) detalhes += ` · pontual em ${parsed.mes_inicio}`;
+    else if(parsed.mes_inicio || parsed.mes_fim) detalhes += ` · ${parsed.mes_inicio||'?'} → ${parsed.mes_fim||'sem fim'}`;
+    addMsg(`✅ <b>${parsed.desc}</b> adicionada!<br>${detalhes}`,'g');
     toast('Conta adicionada!');
 
   } else if(parsed.a==='edit_conta'){
