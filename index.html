@@ -311,9 +311,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <!-- RELATORIO -->
   <div id="pnl-relatorio" class="pnl">
     <div class="scr">
+      <div id="relMesFiltroWrap" style="display:flex;gap:8px;align-items:center;margin-bottom:14px;padding:10px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r)">
+        <label style="font-size:12px;color:var(--text3);white-space:nowrap;font-weight:500">Filtrar por mês:</label>
+        <select id="relMesFiltro" onchange="setMesGastoFiltro(this.value)" style="flex:1;padding:7px 10px;border-radius:var(--rs);border:1px solid var(--border2);background:var(--bg);color:var(--text);font-size:13px;font-family:inherit">
+          <option value="all">Todos os meses</option>
+        </select>
+      </div>
       <div class="sh" style="margin-top:0">Parcelamentos ativos</div>
       <div id="relParcelamentos"></div>
-      <div class="sh">Total pago por beneficiário — 2026</div>
+      <div class="sh">Total pago por beneficiário</div>
       <div id="relBeneficiario"><div class="loading">Carregando...</div></div>
       <div class="sh">Gastos variáveis por categoria</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
@@ -744,7 +750,10 @@ function renderConta(c){
       <div class="ci-right">
         <div class="ci-vl${e.pago?' ptxt':''}">${fmtV(valorExibido)}</div>
         <span class="vc ${vcls}">${vlbl}</span>
-        ${!e.pago?`<button onclick="pagarRapido(${c.id})" title="Pagar com forma padrão" style="display:block;margin-top:4px;background:var(--green-l);border:1px solid var(--green-m);border-radius:var(--rs);padding:3px 8px;font-size:10px;color:var(--green);cursor:pointer;font-family:inherit;font-weight:600">⚡ Pagar</button>`:''}
+        ${!e.pago?(isAgendado
+          ?`<button onclick="pagarRapido(${c.id})" title="Confirmar pagamento" style="display:block;margin-top:4px;background:var(--blue);border:1px solid var(--blue);border-radius:var(--rs);padding:3px 8px;font-size:10px;color:#fff;cursor:pointer;font-family:inherit;font-weight:600">✅ Confirmar</button>`
+          :`<button onclick="pagarRapido(${c.id})" title="Pagar com forma padrão" style="display:block;margin-top:4px;background:var(--green-l);border:1px solid var(--green-m);border-radius:var(--rs);padding:3px 8px;font-size:10px;color:var(--green);cursor:pointer;font-family:inherit;font-weight:600">⚡ Pagar</button>`
+        ):''}
       </div>
     </div>
     ${!e.pago
@@ -1032,11 +1041,19 @@ async function carregarPainel(){
              .reduce((s,p)=>{const c=contas.find(x=>x.id===p.conta_id);return s+(p.valor_pago||c?.valor||0);},0)
     : 0;
 
-  // Custos pessoais agendados (ainda não pagos) — pra projeção
+  // Custos pessoais agendados (ainda não pagos) — saídas pra projeção
   const agendPes = await sbGet('agendamentos', `select=*&mes=eq.${ms}`);
   const idsPagos = new Set(Array.isArray(pagsPes)?pagsPes.filter(p=>p.pago).map(p=>p.conta_id):[]);
   const totalAgendPes = Array.isArray(agendPes)
     ? agendPes.filter(a=>{const c=contas.find(x=>x.id===a.conta_id);return c&&c.tipo==='pessoal'&&!idsPagos.has(a.conta_id);})
+              .reduce((s,a)=>s+(a.valor||0),0)
+    : 0;
+
+  // Retiradas agendadas (forma=ret) — entradas no pessoal que ainda não foram enviadas
+  const retiradasJaEnviadas = await sbGet('retiradas', `select=componente&mes=eq.${ms}&enviado=eq.true`);
+  const compEnviados = new Set(Array.isArray(retiradasJaEnviadas) ? retiradasJaEnviadas.map(r=>r.componente) : []);
+  const totalRetAgendadas = Array.isArray(agendPes)
+    ? agendPes.filter(a=>a.forma==='ret' && a.componente && !compEnviados.has(a.componente))
               .reduce((s,a)=>s+(a.valor||0),0)
     : 0;
 
@@ -1066,8 +1083,9 @@ async function carregarPainel(){
     return `<div class="mc-sub" style="color:${cor}">${sinal}${fmtV(diff)} vs ${MESES_PT[mAnterior.getMonth()].slice(0,3)}</div>`;
   };
 
-  // Projeção: saldo após pagar tudo agendado pessoal
-  const saldoProjetado = saldos.pessoal - totalAgendPes;
+  // Projeção: saldo após receber retiradas agendadas e pagar tudo agendado pessoal
+  const saldoProjetado = saldos.pessoal + totalRetAgendadas - totalAgendPes;
+  const temAgendamentos = totalAgendPes > 0 || totalRetAgendadas > 0;
 
   document.getElementById('painelMesEmpresa').innerHTML=`
     <div class="sh" style="display:flex;justify-content:space-between;align-items:center">
@@ -1093,11 +1111,13 @@ async function carregarPainel(){
       <div class="mc"><div class="mc-lbl">Receita (retiradas)</div><div class="mc-val" style="color:var(--blue)">${fmtV(totalRetPes)}</div></div>
       <div class="mc"><div class="mc-lbl">Custos pagos</div><div class="mc-val" style="color:var(--amber)">${fmtV(totalPes)}</div></div>
       <div class="mc full"><div class="mc-lbl">Saldo estimado</div><div class="mc-val" style="color:${totalRetPes-totalPes>=0?'var(--green)':'var(--red)'}">${fmtV(totalRetPes-totalPes)}</div><div class="mc-sub">Receitas − custos pagos no mês</div></div>
-      ${totalAgendPes > 0 ? `
+      ${temAgendamentos ? `
       <div class="mc full" style="background:var(--${saldoProjetado>=0?'blue':'red'}-l);border-color:var(--${saldoProjetado>=0?'blue':'red'}-m)">
-        <div class="mc-lbl" style="color:var(--${saldoProjetado>=0?'blue':'red'})">📅 Saldo projetado (após pagar agendados)</div>
+        <div class="mc-lbl" style="color:var(--${saldoProjetado>=0?'blue':'red'})">📅 Saldo projetado pessoal</div>
         <div class="mc-val" style="color:var(--${saldoProjetado>=0?'blue':'red'})">${fmtV(saldoProjetado)}</div>
-        <div class="mc-sub" style="color:var(--${saldoProjetado>=0?'blue':'red'})">${fmtV(saldos.pessoal)} atual − ${fmtV(totalAgendPes)} agendado</div>
+        <div class="mc-sub" style="color:var(--${saldoProjetado>=0?'blue':'red'})">
+          ${fmtV(saldos.pessoal)} atual${totalRetAgendadas>0?` + ${fmtV(totalRetAgendadas)} entrada`:''}${totalAgendPes>0?` − ${fmtV(totalAgendPes)} saída`:''}
+        </div>
       </div>` : ''}
     </div>`;
 
@@ -1441,6 +1461,29 @@ let mesGastoFiltro = 'all';
 let porBenefGlobal = {};
 let benefSelecionados = new Set();
 
+// Helper: extrai mês "YYYY-MM" de uma data BR "DD/MM/YYYY" ou retorna o campo mes original
+function extrairMesISO(g){
+  if(g.data_lancamento && /^\d{2}\/\d{2}\/\d{4}$/.test(g.data_lancamento)){
+    const [d,m,y] = g.data_lancamento.split('/');
+    return `${y}-${m}`;
+  }
+  // Fallback: tenta normalizar do campo mes (suja, mas serve)
+  if(g.mes){
+    const meses = {'Janeiro':'01','Fevereiro':'02','Março':'03','Abril':'04','Maio':'05','Junho':'06','Julho':'07','Agosto':'08','Setembro':'09','Outubro':'10','Novembro':'11','Dezembro':'12'};
+    const partes = g.mes.split(' ');
+    const mNum = meses[partes[0]];
+    const ano = partes[1] || hoje.getFullYear();
+    if(mNum) return `${ano}-${mNum}`;
+  }
+  return null;
+}
+
+function labelMesISO(iso){
+  if(!iso) return '';
+  const [y,m] = iso.split('-');
+  return `${MESES_PT[parseInt(m)-1]} ${y}`;
+}
+
 async function carregarRelatorio(){
   // Parcelamentos
   const parc=contas.filter(c=>c.parcela_total&&c.mes_fim);
@@ -1465,13 +1508,31 @@ async function carregarRelatorio(){
   });
   document.getElementById('relParcelamentos').innerHTML=htmlParc||'<div class="empty">Nenhum parcelamento ativo.</div>';
 
-  // Total por beneficiário — apenas contas pessoais
-  const pagamentos=await sbGet('pagamentos_mes','select=*&pago=eq.true');
+  // Carrega pagamentos pessoais e gastos para popular dropdown global
+  const [pagamentos, gastosChatRaw] = await Promise.all([
+    sbGet('pagamentos_mes','select=*&pago=eq.true'),
+    sbGet('gastos','select=*&order=created_at.desc')
+  ]);
+  todosGastos = Array.isArray(gastosChatRaw) ? gastosChatRaw : [];
+
+  // Conjunto de meses disponíveis (de pagamentos + gastos), em formato YYYY-MM
+  const mesesSet = new Set();
+  if(Array.isArray(pagamentos)) pagamentos.forEach(p=>{if(p.mes && /^\d{4}-\d{2}$/.test(p.mes)) mesesSet.add(p.mes);});
+  todosGastos.forEach(g=>{const iso = extrairMesISO(g); if(iso) mesesSet.add(iso);});
+  const mesesOrdenados = [...mesesSet].sort().reverse();
+
+  // Popular dropdown global
+  const sel = document.getElementById('relMesFiltro');
+  sel.innerHTML = `<option value="all"${mesGastoFiltro==='all'?' selected':''}>Todos os meses</option>` +
+    mesesOrdenados.map(m=>`<option value="${m}"${mesGastoFiltro===m?' selected':''}>${labelMesISO(m)}</option>`).join('');
+
+  // Pagamentos por beneficiário (aplica filtro de mês)
   porBenefGlobal={};
   if(Array.isArray(pagamentos)){
     pagamentos.forEach(p=>{
       const c=contas.find(x=>x.id===p.conta_id);
-      if(!c||c.tipo!=='pessoal')return; // só pessoal
+      if(!c||c.tipo!=='pessoal')return;
+      if(mesGastoFiltro!=='all' && p.mes !== mesGastoFiltro) return;
       const key=c.beneficiario;
       if(!porBenefGlobal[key]){porBenefGlobal[key]={total:0,items:[]};}
       porBenefGlobal[key].total+=p.valor_pago||c.valor;
@@ -1481,7 +1542,7 @@ async function carregarRelatorio(){
     });
   }
 
-  // Renderizar filtros de beneficiário — usar nome completo como ID
+  // Filtros de beneficiário
   const benefNomes = Object.keys(porBenefGlobal).sort();
   benefSelecionados = new Set(benefNomes);
   let htmlFiltros = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">`;
@@ -1495,9 +1556,6 @@ async function carregarRelatorio(){
   document.getElementById('relBeneficiario').innerHTML=htmlFiltros;
   renderBenefCards();
 
-  // Gastos variáveis — somente da tabela gastos (não inclui fixos)
-  const gastosChatRaw = await sbGet('gastos','select=*&order=created_at.desc');
-  todosGastos = Array.isArray(gastosChatRaw) ? gastosChatRaw : [];
   renderGastos();
 }
 
@@ -1572,10 +1630,7 @@ function filtrarCat(cat, btn){
 }
 
 function renderGastos(){
-  // Lista única de meses presentes nos gastos
-  const mesesUnicos = [...new Set(todosGastos.map(g=>g.mes).filter(Boolean))].sort().reverse();
-
-  // Aplica filtros: categoria + mês
+  // Aplica filtros: categoria + mês (filtro vem do dropdown global)
   let lista = todosGastos;
   if(catAtual !== 'all'){
     lista = lista.filter(g=>{
@@ -1584,20 +1639,11 @@ function renderGastos(){
     });
   }
   if(mesGastoFiltro !== 'all'){
-    lista = lista.filter(g => g.mes === mesGastoFiltro);
+    lista = lista.filter(g => extrairMesISO(g) === mesGastoFiltro);
   }
 
-  // Dropdown de mês (sempre renderiza, mesmo sem resultado)
-  let html = `<div style="display:flex;gap:6px;align-items:center;margin-bottom:10px">
-    <label style="font-size:12px;color:var(--text3)">Mês:</label>
-    <select onchange="setMesGastoFiltro(this.value)" style="flex:1;padding:7px 10px;border-radius:var(--rs);border:1px solid var(--border2);background:var(--bg2);color:var(--text);font-size:13px;font-family:inherit">
-      <option value="all"${mesGastoFiltro==='all'?' selected':''}>Todos os meses</option>
-      ${mesesUnicos.map(m=>`<option value="${m}"${mesGastoFiltro===m?' selected':''}>${m}</option>`).join('')}
-    </select>
-  </div>`;
-
   if(!lista.length){
-    document.getElementById('relGastos').innerHTML = html + '<div class="empty">Nenhum gasto neste filtro.</div>';
+    document.getElementById('relGastos').innerHTML = '<div class="empty">Nenhum gasto neste filtro.</div>';
     return;
   }
 
@@ -1611,7 +1657,7 @@ function renderGastos(){
   });
 
   const totalGeral=lista.reduce((s,g)=>s+(g.valor||0),0);
-  html += `<div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:var(--rs);padding:10px 12px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
+  let html = `<div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:var(--rs);padding:10px 12px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
     <span style="font-size:12px;color:var(--blue);font-weight:600">${lista.length} gastos</span>
     <span style="font-size:16px;font-weight:600;color:var(--blue)">${fmtV(totalGeral)}</span>
   </div>`;
@@ -1635,7 +1681,8 @@ function renderGastos(){
 
 function setMesGastoFiltro(mes){
   mesGastoFiltro = mes;
-  renderGastos();
+  // Recarrega relatório inteiro pra aplicar filtro nos beneficiários também
+  carregarRelatorio();
 }
 
 // CHAT IA
