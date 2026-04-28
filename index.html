@@ -187,7 +187,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 
 /* === LAYOUT PC (≥1024px) === */
 @media (min-width: 1024px){
-  body{padding:20px 0}
+  body{padding:20px 0;align-items:flex-start}
   .app{max-width:1400px;border-radius:14px;box-shadow:0 4px 24px rgba(0,0,0,.06);min-height:auto;overflow:hidden}
   @media (prefers-color-scheme: dark){.app{box-shadow:0 4px 24px rgba(0,0,0,.4)}}
   .scr{padding:20px 24px}
@@ -199,13 +199,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   .contas-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}
   /* Aba Relatório: 3 colunas */
   .rel-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;align-items:start}
-  /* Painel: cards em 4 colunas */
-  .grid2{grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
-  /* Aba Gráficos: gráficos em 2 colunas */
-  #pnl-graficos .scr{display:grid;grid-template-columns:1fr 1fr;gap:16px;column-gap:24px}
-  #pnl-graficos .scr > .sh{grid-column:1/-1}
-  /* Aba Chat IA: centraliza mais estreito */
-  #pnl-chat .msgs,#pnl-chat .sugs,#pnl-chat .inp-row,#pnl-chat #gastoRapidoChat{max-width:720px;width:100%;margin-left:auto;margin-right:auto}
+  /* Painel: cards em 3 colunas (melhor distribuição que 4) */
+  .grid2{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+  /* Aba Gráficos: 2 colunas reais com cada grafico em um item */
+  #pnl-graficos .scr{display:grid;grid-template-columns:1fr 1fr;gap:16px 20px}
+  #pnl-graficos .grafico-item{margin-bottom:0}
+  /* Aba Chat IA: largura confortável e altura controlada */
+  #pnl-chat{max-height:calc(100vh - 200px)}
+  #pnl-chat .msgs{max-width:760px;width:100%;margin-left:auto;margin-right:auto;min-height:320px}
+  #pnl-chat .sugs,#pnl-chat .inp-row,#pnl-chat #gastoRapidoChat{max-width:760px;width:100%;margin-left:auto;margin-right:auto}
   /* Aba Retirada: 2 colunas (resumo+composição | componentes) */
   .ret-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start}
 }
@@ -409,21 +411,29 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       </select>
     </div>
     <div class="scr">
-      <div class="sh" style="margin-top:0">Lucro líquido mensal — Empresa</div>
-      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px;margin-bottom:12px">
-        <canvas id="chartLucro" height="180"></canvas>
+      <div class="grafico-item">
+        <div class="sh" style="margin-top:0">Lucro líquido mensal — Empresa</div>
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px">
+          <canvas id="chartLucro" height="180"></canvas>
+        </div>
       </div>
-      <div class="sh">Receita vs Custos vs Impostos</div>
-      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px;margin-bottom:12px">
-        <canvas id="chartReceita" height="180"></canvas>
+      <div class="grafico-item">
+        <div class="sh" style="margin-top:0">Receita vs Custos vs Impostos</div>
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px">
+          <canvas id="chartReceita" height="180"></canvas>
+        </div>
       </div>
-      <div class="sh">Gastos pessoais por categoria</div>
-      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px;margin-bottom:12px">
-        <canvas id="chartCategorias" height="220"></canvas>
+      <div class="grafico-item">
+        <div class="sh" style="margin-top:0">Gastos pessoais por categoria</div>
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px">
+          <canvas id="chartCategorias" height="220"></canvas>
+        </div>
       </div>
-      <div class="sh">Lucro acumulado</div>
-      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px;margin-bottom:12px">
-        <canvas id="chartSaldo" height="180"></canvas>
+      <div class="grafico-item">
+        <div class="sh" style="margin-top:0">Lucro acumulado</div>
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px">
+          <canvas id="chartSaldo" height="180"></canvas>
+        </div>
       </div>
     </div>
   </div>
