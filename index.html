@@ -761,12 +761,15 @@ function renderConta(c){
         ?`<div class="ci-actions" style="margin-top:8px">
             <button onclick="programarConta(${c.id})" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--rs);color:var(--text2);font-size:12px;cursor:pointer;font-family:inherit">✏️ Editar agendamento ou desfazer</button>
           </div>`
-        :`<div class="ci-actions">
-            <div class="ci-row"><label>Valor</label><input type="number" id="val-${c.id}" value="${Number(valorExibido).toFixed(2)}" step="0.01"></div>
-            <div class="ci-row"><label>Via</label><div class="forma-btns">${fbs}</div></div>
-            <div style="display:flex;gap:6px">
-              <button class="btn-ok" onclick="pagarConta(${c.id})" style="flex:1">Confirmar pagamento</button>
-              <button onclick="programarConta(${c.id})" style="flex:0;padding:9px 12px;background:var(--purple-l);border:1px solid var(--purple-m);border-radius:var(--rs);color:var(--purple);font-size:12px;cursor:pointer;font-family:inherit;white-space:nowrap">📅 Programar</button>
+        :`<div class="ci-actions" style="margin-top:8px">
+            <button onclick="toggleEditConta(${c.id})" id="editBtn-${c.id}" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--rs);color:var(--text2);font-size:12px;cursor:pointer;font-family:inherit">✏️ Editar antes de pagar ou programar</button>
+            <div id="editArea-${c.id}" style="display:none;margin-top:8px">
+              <div class="ci-row"><label>Valor</label><input type="number" id="val-${c.id}" value="${Number(valorExibido).toFixed(2)}" step="0.01"></div>
+              <div class="ci-row" style="margin-top:6px"><label>Via</label><div class="forma-btns">${fbs}</div></div>
+              <div style="display:flex;gap:6px;margin-top:8px">
+                <button class="btn-ok" onclick="pagarConta(${c.id})" style="flex:1">Confirmar pagamento</button>
+                <button onclick="programarConta(${c.id})" style="flex:0;padding:9px 12px;background:var(--purple-l);border:1px solid var(--purple-m);border-radius:var(--rs);color:var(--purple);font-size:12px;cursor:pointer;font-family:inherit;white-space:nowrap">📅 Programar</button>
+              </div>
             </div>
           </div>`)
       :`<div class="pago-info">
@@ -775,6 +778,19 @@ function renderConta(c){
           <button class="btn-desfaz" onclick="desfazerPagamento(${c.id})">Desfazer</button>
         </div>`}
   </div>`;
+}
+
+function toggleEditConta(id){
+  const area = document.getElementById('editArea-'+id);
+  const btn = document.getElementById('editBtn-'+id);
+  if(!area || !btn) return;
+  if(area.style.display === 'none'){
+    area.style.display = 'block';
+    btn.style.display = 'none';
+  } else {
+    area.style.display = 'none';
+    btn.style.display = 'block';
+  }
 }
 
 let agendamentos = {};
