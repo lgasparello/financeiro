@@ -42,6 +42,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .tb.on{color:var(--blue);border-bottom-color:var(--blue)}
 .pnl{display:none;flex:1;flex-direction:column}.pnl.on{display:flex}
 .scr{flex:1;overflow-y:auto;padding:12px}
+/* Espaço extra no fundo dos painéis com barra flutuante para o último item não ficar coberto */
+#pnl-contas .scr,#pnl-retirada .scr{padding-bottom:200px}
 .sh{font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;margin:14px 0 8px}
 .sh:first-child{margin-top:0}
 
