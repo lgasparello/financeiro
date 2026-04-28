@@ -1614,6 +1614,13 @@ AÇÕES DISPONÍVEIS — responda SOMENTE o JSON correspondente, sem markdown:
 8. REGISTRAR RETIRADA LLG:
 {"a":"retirada","componente":"pro_labore|plano_saude|moto|lucros","valor":0.00,"data":"dd/mm/aaaa","msg":"confirmação"}
 
+9. DESFAZER GASTO VARIÁVEL (estornar gasto da tabela gastos — devolve o valor ao saldo):
+Use o id que aparece em GASTOS VARIÁVEIS RECENTES.
+{"a":"desfazer_gasto","id":0,"msg":"confirmação"}
+
+10. EDITAR GASTO VARIÁVEL (corrigir valor, descrição ou categoria):
+{"a":"edit_gasto","id":0,"campo":"valor|descricao|categoria","valor_novo":"novo valor","msg":"confirmação"}
+
 PARA PERGUNTAS: responda diretamente, máximo 4 linhas, objetivo.`;
 }
 
@@ -1645,7 +1652,7 @@ async function sendMsg(){
       sbGet('pagamentos_mes',`select=*&mes=eq.${ms}&pago=eq.true&order=data_pagamento.desc`)
     ]);
     const ctxGastos = Array.isArray(gastosRec) ? gastosRec
-      .map(g=>`${g.data_lancamento} | ${g.descricao} | R$${g.valor} | ${g.categoria} | ${g.conta}`)
+      .map(g=>`id=${g.id} | ${g.data_lancamento} | ${g.descricao} | R$${g.valor} | ${g.categoria} | ${g.conta}`)
       .join('\n') : '';
     const ctxPagas = Array.isArray(pagsRec) ? pagsRec
       .map(p=>{ const c=contas.find(x=>x.id===p.conta_id); return c?`${p.data_pagamento||'?'} | ${c.nome} | R$${p.valor_pago} | ${p.forma==='pes'?'débito pessoal':p.forma==='llg'?'débito empresa':'cartão'} | ${c.tipo}`:null; })
@@ -1755,6 +1762,39 @@ async function processarAcaoChat(parsed){
     await abaterSaldo('llg',parsed.valor);
     await reporSaldo('pessoal',parsed.valor);
     addMsg(`✅ ${parsed.msg}`,'g');toast('Retirada registrada!');
+
+  } else if(parsed.a==='desfazer_gasto'){
+    // Buscar o gasto pra saber valor e conta antes de deletar
+    const gastoData = await sbGet('gastos', `select=*&id=eq.${parsed.id}`);
+    if(!Array.isArray(gastoData) || !gastoData.length){
+      addMsg(`❌ Gasto id ${parsed.id} não encontrado.`,'a');
+      return;
+    }
+    const g = gastoData[0];
+    await sbDelete('gastos', `id=eq.${parsed.id}`);
+    // Repor saldo (mesma lógica do reg, mas ao contrário)
+    const contaSaldo = g.conta==='empresa'?'llg':'pessoal';
+    await reporSaldo(contaSaldo, g.valor);
+    addMsg(`✅ ${parsed.msg}<br><span style="font-size:12px;color:var(--text3)">Estornado: ${g.descricao} · ${fmtV(g.valor)} (${g.conta})</span>`,'g');
+    toast('Gasto removido!');
+
+  } else if(parsed.a==='edit_gasto'){
+    const dados = {};
+    dados[parsed.campo] = parsed.valor_novo;
+    // Se mudou o valor, ajustar saldo (só repõe a diferença)
+    if(parsed.campo === 'valor'){
+      const gastoData = await sbGet('gastos', `select=*&id=eq.${parsed.id}`);
+      if(Array.isArray(gastoData) && gastoData.length){
+        const g = gastoData[0];
+        const diff = Number(parsed.valor_novo) - g.valor;
+        const contaSaldo = g.conta==='empresa'?'llg':'pessoal';
+        if(diff > 0) await abaterSaldo(contaSaldo, diff);
+        else if(diff < 0) await reporSaldo(contaSaldo, -diff);
+      }
+    }
+    await sbPatch('gastos', `id=eq.${parsed.id}`, dados);
+    addMsg(`✅ ${parsed.msg}`,'g');
+    toast('Gasto atualizado!');
   }
 }
 
