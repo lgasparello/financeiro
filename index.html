@@ -744,6 +744,7 @@ function renderConta(c){
       <div class="ci-right">
         <div class="ci-vl${e.pago?' ptxt':''}">${fmtV(valorExibido)}</div>
         <span class="vc ${vcls}">${vlbl}</span>
+        ${!e.pago?`<button onclick="pagarRapido(${c.id})" title="Pagar com forma padrão" style="display:block;margin-top:4px;background:var(--green-l);border:1px solid var(--green-m);border-radius:var(--rs);padding:3px 8px;font-size:10px;color:var(--green);cursor:pointer;font-family:inherit;font-weight:600">⚡ Pagar</button>`:''}
       </div>
     </div>
     ${!e.pago
@@ -860,6 +861,31 @@ function toggleSel(id){
   if(!statusMes[id])statusMes[id]={pago:false,valorPago:contas.find(c=>c.id===id)?.valor,forma:'pes',selecionado:false};
   statusMes[id].selecionado=!statusMes[id].selecionado;
   renderTodasContas();
+}
+
+async function pagarRapido(id){
+  const c = contas.find(x=>x.id===id);
+  if(!c) return;
+  // Usa o valor agendado se houver, senão valor padrão da conta
+  const agend = agendamentos[id];
+  const valor = agend ? agend.valor : c.valor;
+  const formaUsar = (agend && agend.forma) || statusMes[id]?.forma || c.forma_padrao;
+  const formaLbl = formaUsar==='llg'?'Débito LLG':formaUsar==='crt'?'Cartão':'Débito pessoal';
+  if(!confirm(`Pagar "${c.nome}"?\n\nValor: ${fmtV(valor)}\nForma: ${formaLbl}`)) return;
+  // Garante o status correto antes de pagar
+  if(!statusMes[id]) statusMes[id] = {pago:false, valorPago:valor, forma:formaUsar, selecionado:false};
+  statusMes[id].forma = formaUsar;
+  statusMes[id].valorPago = valor;
+  const ms = mesStr(mesAtual.y, mesAtual.m);
+  const dataStr = `${DIA_HOJE.toString().padStart(2,'0')}/${String(mesAtual.m+1).padStart(2,'0')}/${mesAtual.y}`;
+  statusMes[id] = {...statusMes[id], pago:true, valorPago:valor, data:dataStr, selecionado:false};
+  await salvarStatusMes(id, ms, {pago:true, valor_pago:valor, forma:formaUsar, data_pagamento:dataStr});
+  if(formaUsar !== 'crt'){
+    await abaterSaldo(c.tipo==='empresa'?'llg':'pessoal', valor);
+  }
+  renderTodasContas(); renderDias();
+  if(diaSel!==null) renderDiaInfo(diaSel);
+  toast('Pagamento confirmado!');
 }
 
 async function pagarConta(id){
@@ -991,19 +1017,27 @@ async function carregarPainel(){
     calcularMes(msAnt)
   ]);
 
-  // Acumulado 2026
-  const meses2026 = ['2026-01','2026-02','2026-03','2026-04'];
+  // Acumulado do ano atual (jan até mês corrente — dinâmico)
+  const anoAtual = mesAtual.y;
   let lucroAcum = 0;
-  for(const m of meses2026){
-    const d = await calcularMes(m);
+  for(let m=0; m<=mesAtual.m; m++){
+    const d = await calcularMes(mesStr(anoAtual, m));
     lucroAcum += d.lucro;
   }
 
-  // Custos pessoais do mês
+  // Custos pessoais do mês (já pagos)
   const pagsPes = await sbGet('pagamentos_mes', `select=*&mes=eq.${ms}&pago=eq.true`);
   const totalPes = Array.isArray(pagsPes)
     ? pagsPes.filter(p=>{const c=contas.find(x=>x.id===p.conta_id);return c&&c.tipo==='pessoal';})
              .reduce((s,p)=>{const c=contas.find(x=>x.id===p.conta_id);return s+(p.valor_pago||c?.valor||0);},0)
+    : 0;
+
+  // Custos pessoais agendados (ainda não pagos) — pra projeção
+  const agendPes = await sbGet('agendamentos', `select=*&mes=eq.${ms}`);
+  const idsPagos = new Set(Array.isArray(pagsPes)?pagsPes.filter(p=>p.pago).map(p=>p.conta_id):[]);
+  const totalAgendPes = Array.isArray(agendPes)
+    ? agendPes.filter(a=>{const c=contas.find(x=>x.id===a.conta_id);return c&&c.tipo==='pessoal'&&!idsPagos.has(a.conta_id);})
+              .reduce((s,a)=>s+(a.valor||0),0)
     : 0;
 
   // Receita pessoal = retiradas do mês
@@ -1013,14 +1047,39 @@ async function carregarPainel(){
   const labelMes = mesLabel(mesAtual.y, mesAtual.m);
   const limiteRetirada = dadosAnt.lucro;
 
+  // Helper pra mostrar diff vs mês anterior
+  const diffStr = (atual, anterior) => {
+    if(!anterior && anterior !== 0) return '';
+    const diff = atual - anterior;
+    if(Math.abs(diff) < 0.01) return '<div class="mc-sub">igual ao mês anterior</div>';
+    const cor = diff > 0 ? 'var(--red)' : 'var(--green)';
+    const sinal = diff > 0 ? '+' : '';
+    return `<div class="mc-sub" style="color:${cor}">${sinal}${fmtV(diff)} vs ${MESES_PT[mAnterior.getMonth()].slice(0,3)}</div>`;
+  };
+  // Diff onde aumentar é bom (receita, lucro, retirado)
+  const diffStrPositivo = (atual, anterior) => {
+    if(!anterior && anterior !== 0) return '';
+    const diff = atual - anterior;
+    if(Math.abs(diff) < 0.01) return '<div class="mc-sub">igual ao mês anterior</div>';
+    const cor = diff > 0 ? 'var(--green)' : 'var(--red)';
+    const sinal = diff > 0 ? '+' : '';
+    return `<div class="mc-sub" style="color:${cor}">${sinal}${fmtV(diff)} vs ${MESES_PT[mAnterior.getMonth()].slice(0,3)}</div>`;
+  };
+
+  // Projeção: saldo após pagar tudo agendado pessoal
+  const saldoProjetado = saldos.pessoal - totalAgendPes;
+
   document.getElementById('painelMesEmpresa').innerHTML=`
-    <div class="sh">${labelMes} — empresa</div>
+    <div class="sh" style="display:flex;justify-content:space-between;align-items:center">
+      <span>${labelMes} — empresa</span>
+      <button onclick="carregarPainel()" title="Recarregar dados" style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:4px 10px;font-size:11px;color:var(--text2);cursor:pointer;font-family:inherit">↻ Atualizar</button>
+    </div>
     <div class="grid2">
-      <div class="mc"><div class="mc-lbl">Receita</div><div class="mc-val" style="color:var(--blue)">${fmtV(dadosMes.receita)}</div><div class="mc-sub">${dadosMes.receitaItens.map(r=>r.cliente).join(', ')||'—'}</div></div>
-      <div class="mc"><div class="mc-lbl">Lucro líquido</div><div class="mc-val" style="color:${dadosMes.lucro>=0?'var(--green)':'var(--red)'}">${fmtV(dadosMes.lucro)}</div></div>
-      <div class="mc"><div class="mc-lbl">Custo fixo</div><div class="mc-val" style="color:var(--amber)">${fmtV(dadosMes.cf)}</div></div>
-      <div class="mc"><div class="mc-lbl">Custo variável</div><div class="mc-val" style="color:var(--amber)">${fmtV(dadosMes.cv)}</div></div>
-      <div class="mc"><div class="mc-lbl">Impostos</div><div class="mc-val" style="color:var(--red)">${fmtV(dadosMes.impostos)}</div></div>
+      <div class="mc"><div class="mc-lbl">Receita</div><div class="mc-val" style="color:var(--blue)">${fmtV(dadosMes.receita)}</div>${diffStrPositivo(dadosMes.receita, dadosAnt.receita)}</div>
+      <div class="mc"><div class="mc-lbl">Lucro líquido</div><div class="mc-val" style="color:${dadosMes.lucro>=0?'var(--green)':'var(--red)'}">${fmtV(dadosMes.lucro)}</div>${diffStrPositivo(dadosMes.lucro, dadosAnt.lucro)}</div>
+      <div class="mc"><div class="mc-lbl">Custo fixo</div><div class="mc-val" style="color:var(--amber)">${fmtV(dadosMes.cf)}</div>${diffStr(dadosMes.cf, dadosAnt.cf)}</div>
+      <div class="mc"><div class="mc-lbl">Custo variável</div><div class="mc-val" style="color:var(--amber)">${fmtV(dadosMes.cv)}</div>${diffStr(dadosMes.cv, dadosAnt.cv)}</div>
+      <div class="mc"><div class="mc-lbl">Impostos</div><div class="mc-val" style="color:var(--red)">${fmtV(dadosMes.impostos)}</div>${diffStr(dadosMes.impostos, dadosAnt.impostos)}</div>
       <div class="mc"><div class="mc-lbl">Total retirado</div><div class="mc-val" style="color:var(--purple)">${fmtV(dadosMes.retirado)}</div></div>
       <div class="mc full" style="background:var(--${limiteRetirada>0?'amber':'red'}-l);border-color:var(--${limiteRetirada>0?'amber':'red'}-m)">
         <div class="mc-lbl" style="color:var(--${limiteRetirada>0?'amber':'red'})">Limite retirada lucros (mês anterior)</div>
@@ -1033,14 +1092,20 @@ async function carregarPainel(){
     <div class="grid2">
       <div class="mc"><div class="mc-lbl">Receita (retiradas)</div><div class="mc-val" style="color:var(--blue)">${fmtV(totalRetPes)}</div></div>
       <div class="mc"><div class="mc-lbl">Custos pagos</div><div class="mc-val" style="color:var(--amber)">${fmtV(totalPes)}</div></div>
-      <div class="mc full"><div class="mc-lbl">Saldo estimado</div><div class="mc-val" style="color:${totalRetPes-totalPes>=0?'var(--green)':'var(--red)'}">${fmtV(totalRetPes-totalPes)}</div><div class="mc-sub">Mês ainda aberto</div></div>
+      <div class="mc full"><div class="mc-lbl">Saldo estimado</div><div class="mc-val" style="color:${totalRetPes-totalPes>=0?'var(--green)':'var(--red)'}">${fmtV(totalRetPes-totalPes)}</div><div class="mc-sub">Receitas − custos pagos no mês</div></div>
+      ${totalAgendPes > 0 ? `
+      <div class="mc full" style="background:var(--${saldoProjetado>=0?'blue':'red'}-l);border-color:var(--${saldoProjetado>=0?'blue':'red'}-m)">
+        <div class="mc-lbl" style="color:var(--${saldoProjetado>=0?'blue':'red'})">📅 Saldo projetado (após pagar agendados)</div>
+        <div class="mc-val" style="color:var(--${saldoProjetado>=0?'blue':'red'})">${fmtV(saldoProjetado)}</div>
+        <div class="mc-sub" style="color:var(--${saldoProjetado>=0?'blue':'red'})">${fmtV(saldos.pessoal)} atual − ${fmtV(totalAgendPes)} agendado</div>
+      </div>` : ''}
     </div>`;
 
   document.getElementById('painelAcumulado').innerHTML=`
-    <div class="sh">Acumulado 2026</div>
+    <div class="sh">Acumulado ${anoAtual}</div>
     <div class="grid2">
-      <div class="mc"><div class="mc-lbl">Lucro empresa</div><div class="mc-val" style="color:${lucroAcum>=0?'var(--green)':'var(--red)'}">${fmtV(lucroAcum)}</div></div>
-      <div class="mc"><div class="mc-lbl">Saldo pessoal</div><div class="mc-val" style="color:var(--blue)">${fmtV(saldos.pessoal)}</div></div>
+      <div class="mc"><div class="mc-lbl">Lucro empresa (jan–${MESES_PT[mesAtual.m].slice(0,3).toLowerCase()})</div><div class="mc-val" style="color:${lucroAcum>=0?'var(--green)':'var(--red)'}">${fmtV(lucroAcum)}</div></div>
+      <div class="mc"><div class="mc-lbl">Saldo pessoal atual</div><div class="mc-val" style="color:${saldos.pessoal>=0?'var(--blue)':'var(--red)'}">${fmtV(saldos.pessoal)}</div></div>
     </div>`;
 }
 
@@ -1372,6 +1437,7 @@ async function desfazerRetirada(comp,ms){
 // RELATORIO
 let todosGastos = [];
 let catAtual = 'all';
+let mesGastoFiltro = 'all';
 let porBenefGlobal = {};
 let benefSelecionados = new Set();
 
@@ -1506,16 +1572,32 @@ function filtrarCat(cat, btn){
 }
 
 function renderGastos(){
-  const lista = catAtual==='all'
-    ? todosGastos
-    : todosGastos.filter(g=>{
-        const c=(g.categoria||'').toLowerCase();
-        const f=catAtual.toLowerCase();
-        return c.includes(f);
-      });
+  // Lista única de meses presentes nos gastos
+  const mesesUnicos = [...new Set(todosGastos.map(g=>g.mes).filter(Boolean))].sort().reverse();
+
+  // Aplica filtros: categoria + mês
+  let lista = todosGastos;
+  if(catAtual !== 'all'){
+    lista = lista.filter(g=>{
+      const c=(g.categoria||'').toLowerCase();
+      return c.includes(catAtual.toLowerCase());
+    });
+  }
+  if(mesGastoFiltro !== 'all'){
+    lista = lista.filter(g => g.mes === mesGastoFiltro);
+  }
+
+  // Dropdown de mês (sempre renderiza, mesmo sem resultado)
+  let html = `<div style="display:flex;gap:6px;align-items:center;margin-bottom:10px">
+    <label style="font-size:12px;color:var(--text3)">Mês:</label>
+    <select onchange="setMesGastoFiltro(this.value)" style="flex:1;padding:7px 10px;border-radius:var(--rs);border:1px solid var(--border2);background:var(--bg2);color:var(--text);font-size:13px;font-family:inherit">
+      <option value="all"${mesGastoFiltro==='all'?' selected':''}>Todos os meses</option>
+      ${mesesUnicos.map(m=>`<option value="${m}"${mesGastoFiltro===m?' selected':''}>${m}</option>`).join('')}
+    </select>
+  </div>`;
 
   if(!lista.length){
-    document.getElementById('relGastos').innerHTML='<div class="empty">Nenhum gasto registrado nesta categoria.</div>';
+    document.getElementById('relGastos').innerHTML = html + '<div class="empty">Nenhum gasto neste filtro.</div>';
     return;
   }
 
@@ -1529,7 +1611,7 @@ function renderGastos(){
   });
 
   const totalGeral=lista.reduce((s,g)=>s+(g.valor||0),0);
-  let html=`<div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:var(--rs);padding:10px 12px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
+  html += `<div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:var(--rs);padding:10px 12px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
     <span style="font-size:12px;color:var(--blue);font-weight:600">${lista.length} gastos</span>
     <span style="font-size:16px;font-weight:600;color:var(--blue)">${fmtV(totalGeral)}</span>
   </div>`;
@@ -1549,6 +1631,11 @@ function renderGastos(){
   });
 
   document.getElementById('relGastos').innerHTML=html;
+}
+
+function setMesGastoFiltro(mes){
+  mesGastoFiltro = mes;
+  renderGastos();
 }
 
 // CHAT IA
