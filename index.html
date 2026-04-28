@@ -729,6 +729,8 @@ function renderConta(c){
   const fbs=['llg','pes','crt'].map(f=>`<button class="forma-btn${e.forma===f?' on-'+f:''}" onclick="setForma(${c.id},'${f}')">${f==='llg'?'LLG':f==='crt'?'Cartão':'Pessoal'}</button>`).join('');
   const agend = agendamentos[c.id];
   const isAgendado = !!agend;
+  // Se tem agendamento e conta não está paga, usa o valor do agendamento
+  const valorExibido = (!e.pago && isAgendado) ? agend.valor : e.valorPago;
   return `<div class="ci${e.pago?' pago':''}${e.selecionado?' sel-ci':''}${isAgendado?' agendado':''}" id="ci-${c.id}">
     <div class="ci-top">
       <div style="display:flex;gap:8px;align-items:flex-start">
@@ -739,13 +741,13 @@ function renderConta(c){
         </div>
       </div>
       <div class="ci-right">
-        <div class="ci-vl${e.pago?' ptxt':''}">${fmtV(e.valorPago)}</div>
+        <div class="ci-vl${e.pago?' ptxt':''}">${fmtV(valorExibido)}</div>
         <span class="vc ${vcls}">${vlbl}</span>
       </div>
     </div>
     ${!e.pago
       ?`<div class="ci-actions">
-          <div class="ci-row"><label>Valor</label><input type="number" id="val-${c.id}" value="${Number(e.valorPago).toFixed(2)}" step="0.01"></div>
+          <div class="ci-row"><label>Valor</label><input type="number" id="val-${c.id}" value="${Number(valorExibido).toFixed(2)}" step="0.01"></div>
           <div class="ci-row"><label>Via</label><div class="forma-btns">${fbs}</div></div>
           <div style="display:flex;gap:6px">
             <button class="btn-ok" onclick="pagarConta(${c.id})" style="flex:1">Confirmar pagamento</button>
