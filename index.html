@@ -1328,19 +1328,17 @@ async function enviarRetirada(comp,ms){
   const data=document.getElementById('ret-data-'+comp)?.value||'';
   const dataFmt=data?data.split('-').reverse().join('/'):'';
   await sbPost('retiradas',{componente:comp,mes:ms,valor:val,enviado:true,data_envio:dataFmt},'resolution=merge-duplicates');
-  retiradaMes[comp]={valor:val,enviado:true,data:dataFmt};
   dadosFinanceiros={};
-  await atualizarRetirada();
   toast('Retirada confirmada!');
+  await atualizarRetirada();
 }
 
 async function desfazerRetirada(comp,ms){
   const val=retiradaMes[comp]?.valor||0;
   await sbPost('retiradas',{componente:comp,mes:ms,valor:val,enviado:false},'resolution=merge-duplicates');
-  retiradaMes[comp]={...retiradaMes[comp],enviado:false};
   dadosFinanceiros={};
-  await atualizarRetirada();
   toast('Desfeito');
+  await atualizarRetirada();
 }
 
 // RELATORIO
