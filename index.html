@@ -757,14 +757,18 @@ function renderConta(c){
       </div>
     </div>
     ${!e.pago
-      ?`<div class="ci-actions">
-          <div class="ci-row"><label>Valor</label><input type="number" id="val-${c.id}" value="${Number(valorExibido).toFixed(2)}" step="0.01"></div>
-          <div class="ci-row"><label>Via</label><div class="forma-btns">${fbs}</div></div>
-          <div style="display:flex;gap:6px">
-            <button class="btn-ok" onclick="pagarConta(${c.id})" style="flex:1">Confirmar pagamento</button>
-            <button onclick="programarConta(${c.id})" style="flex:0;padding:9px 12px;background:var(--purple-l);border:1px solid var(--purple-m);border-radius:var(--rs);color:var(--purple);font-size:12px;cursor:pointer;font-family:inherit;white-space:nowrap">${isAgendado?'✓ Agendado':'📅 Programar'}</button>
-          </div>
-        </div>`
+      ?(isAgendado
+        ?`<div class="ci-actions" style="margin-top:8px">
+            <button onclick="programarConta(${c.id})" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--rs);color:var(--text2);font-size:12px;cursor:pointer;font-family:inherit">✏️ Editar agendamento ou desfazer</button>
+          </div>`
+        :`<div class="ci-actions">
+            <div class="ci-row"><label>Valor</label><input type="number" id="val-${c.id}" value="${Number(valorExibido).toFixed(2)}" step="0.01"></div>
+            <div class="ci-row"><label>Via</label><div class="forma-btns">${fbs}</div></div>
+            <div style="display:flex;gap:6px">
+              <button class="btn-ok" onclick="pagarConta(${c.id})" style="flex:1">Confirmar pagamento</button>
+              <button onclick="programarConta(${c.id})" style="flex:0;padding:9px 12px;background:var(--purple-l);border:1px solid var(--purple-m);border-radius:var(--rs);color:var(--purple);font-size:12px;cursor:pointer;font-family:inherit;white-space:nowrap">📅 Programar</button>
+            </div>
+          </div>`)
       :`<div class="pago-info">
           <span class="pago-badge ${formaBadge(e.forma)}">${formaLabel(e.forma)}</span>
           ${e.data?`<span style="font-size:11px;color:var(--text3)">${e.data}</span>`:''}
@@ -783,33 +787,38 @@ async function carregarAgendamentos(ms){
 
 async function programarConta(id){
   const inp = document.getElementById('val-'+id);
-  const v = parseFloat(inp?.value || statusMes[id]?.valorPago) || statusMes[id]?.valorPago;
   const c = contas.find(x=>x.id===id);
   const ms = mesStr(mesAtual.y, mesAtual.m);
+  const agendAtual = agendamentos[id];
 
-  if(agendamentos[id]){
-    // Remover agendamento
-    await fetch(`${SB_URL}/rest/v1/agendamentos?conta_id=eq.${id}&mes=eq.${ms}`,{method:'DELETE',headers:SB_HDR});
-    delete agendamentos[id];
-    toast('Agendamento removido');
-    renderTodasContas();
-    return;
+  // Valor padrão e data padrão
+  let v, dataDefault;
+  if(agendAtual){
+    // Já agendado: usa valores existentes
+    v = agendAtual.valor;
+    // converte dd/mm/yyyy → yyyy-mm-dd
+    const partes = (agendAtual.data_programada||'').split('/');
+    dataDefault = partes.length===3 ? `${partes[2]}-${partes[1]}-${partes[0]}` : '';
+  } else {
+    v = parseFloat(inp?.value || statusMes[id]?.valorPago) || statusMes[id]?.valorPago || c.valor;
+    const diaDefault = String(c.dia_vencimento).padStart(2,'0');
+    const mesStr2 = String(mesAtual.m+1).padStart(2,'0');
+    dataDefault = `${mesAtual.y}-${mesStr2}-${diaDefault}`;
   }
 
-  // Data padrão = dia de vencimento do mês atual
-  const diaDefault = String(c.dia_vencimento).padStart(2,'0');
-  const mesStr2 = String(mesAtual.m+1).padStart(2,'0');
-  const dataDefault = `${mesAtual.y}-${mesStr2}-${diaDefault}`;
-
-  // Mostrar mini modal para confirmar/alterar data
   const existing = document.getElementById('modalProgr');
   if(existing) existing.remove();
+
+  const titulo = agendAtual ? `✏️ Editar agendamento — ${c.nome}` : `📅 Programar — ${c.nome}`;
+  const btnDesfazer = agendAtual
+    ? `<button onclick="desfazerAgendamento(${id})" style="padding:10px 14px;background:var(--red-l);border:1px solid var(--red-m);border-radius:var(--rs);color:var(--red);font-size:13px;cursor:pointer;font-family:inherit">🗑 Desfazer</button>`
+    : '';
 
   const modal = document.createElement('div');
   modal.id = 'modalProgr';
   modal.style.cssText = `position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;background:var(--bg);border-top:1px solid var(--border);border-radius:16px 16px 0 0;padding:16px;z-index:200;box-shadow:0 -4px 24px rgba(0,0,0,.15)`;
   modal.innerHTML = `
-    <div style="font-size:13px;font-weight:600;margin-bottom:12px">📅 Programar — ${c.nome}</div>
+    <div style="font-size:13px;font-weight:600;margin-bottom:12px">${titulo}</div>
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
       <label style="font-size:12px;color:var(--text3);white-space:nowrap">Valor:</label>
       <input type="number" id="modalValProgr" value="${Number(v).toFixed(2)}" step="0.01" style="flex:1;padding:8px 10px;border-radius:var(--rs);border:1px solid var(--border2);background:var(--bg2);color:var(--text);font-size:13px;font-family:inherit">
@@ -819,14 +828,25 @@ async function programarConta(id){
       <input type="date" id="inputDataProgr" value="${dataDefault}" style="flex:1;padding:8px 10px;border-radius:var(--rs);border:1px solid var(--border2);background:var(--bg2);color:var(--text);font-size:13px;font-family:inherit">
     </div>
     <div style="display:flex;gap:6px">
-      <button onclick="confirmarProgramar(${id})" style="flex:1;padding:10px;background:var(--purple-l);border:1px solid var(--purple-m);border-radius:var(--rs);color:var(--purple);font-size:13px;font-weight:500;cursor:pointer;font-family:inherit">Confirmar</button>
+      <button onclick="confirmarProgramar(${id})" style="flex:1;padding:10px;background:var(--purple-l);border:1px solid var(--purple-m);border-radius:var(--rs);color:var(--purple);font-size:13px;font-weight:500;cursor:pointer;font-family:inherit">${agendAtual?'Salvar alterações':'Confirmar'}</button>
+      ${btnDesfazer}
       <button onclick="document.getElementById('modalProgr').remove()" style="padding:10px 14px;background:none;border:1px solid var(--border2);border-radius:var(--rs);color:var(--text3);font-size:13px;cursor:pointer;font-family:inherit">Cancelar</button>
     </div>`;
   document.querySelector('.app').appendChild(modal);
-  // Guardar id temporário
   modal._contaId = id;
   modal._valor = v;
   modal._ms = ms;
+}
+
+async function desfazerAgendamento(id){
+  const c = contas.find(x=>x.id===id);
+  if(!confirm(`Desfazer agendamento de "${c?.nome||'conta'}"?`)) return;
+  const ms = mesStr(mesAtual.y, mesAtual.m);
+  await sbDelete('agendamentos', `conta_id=eq.${id}&mes=eq.${ms}`);
+  delete agendamentos[id];
+  document.getElementById('modalProgr')?.remove();
+  renderTodasContas();
+  toast('Agendamento removido');
 }
 
 async function confirmarProgramar(id){
