@@ -458,9 +458,27 @@ const SB_URL='https://reymsbccsnjesqmqcqei.supabase.co';
 const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJleW1zYmNjc25qZXNxbXFjcWVpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY4NzI2MTMsImV4cCI6MjA5MjQ0ODYxM30.vQa61UqiUyKqYC8G7owMB6vyyjwnrbwqfhb9_A-lxiU';
 const SB_HDR={'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json'};
 
-async function sbGet(t,q=''){const r=await fetch(`${SB_URL}/rest/v1/${t}?${q}`,{headers:SB_HDR});return r.json();}
-async function sbPost(t,d,opts=''){const r=await fetch(`${SB_URL}/rest/v1/${t}`,{method:'POST',headers:{...SB_HDR,'Prefer':opts||'return=representation'},body:JSON.stringify(d)});return r.json();}
-async function sbPatch(t,q,d){const r=await fetch(`${SB_URL}/rest/v1/${t}?${q}`,{method:'PATCH',headers:{...SB_HDR,'Prefer':'return=representation'},body:JSON.stringify(d)});return r.json();}
+async function sbGet(t,q=''){const r=await fetch(`${SB_URL}/rest/v1/${t}?${q}`,{headers:SB_HDR});const tx=await r.text();return tx?JSON.parse(tx):[];}
+async function sbPost(t,d,opts=''){const r=await fetch(`${SB_URL}/rest/v1/${t}`,{method:'POST',headers:{...SB_HDR,'Prefer':opts||'return=representation'},body:JSON.stringify(d)});const tx=await r.text();return tx?JSON.parse(tx):null;}
+async function sbPatch(t,q,d){const r=await fetch(`${SB_URL}/rest/v1/${t}?${q}`,{method:'PATCH',headers:{...SB_HDR,'Prefer':'return=representation'},body:JSON.stringify(d)});const tx=await r.text();return tx?JSON.parse(tx):null;}
+
+// UPSERT manual: PATCH primeiro, INSERT se nao existir. Para tabelas sem constraint UNIQUE.
+async function sbUpsert(table, matchQuery, dados){
+  const patch = await fetch(`${SB_URL}/rest/v1/${table}?${matchQuery}`,{
+    method:'PATCH',headers:{...SB_HDR,'Prefer':'return=representation'},
+    body:JSON.stringify(dados)
+  });
+  const tx = await patch.text();
+  const patchData = tx?JSON.parse(tx):[];
+  if(Array.isArray(patchData)&&patchData.length===0){
+    return await sbPost(table, dados);
+  }
+  return patchData;
+}
+
+async function sbDelete(table, matchQuery){
+  await fetch(`${SB_URL}/rest/v1/${table}?${matchQuery}`,{method:'DELETE',headers:SB_HDR});
+}
 async function salvarStatusMes(id, ms, dados){
   // Tenta patch primeiro (atualizar existente)
   const patch = await fetch(`${SB_URL}/rest/v1/pagamentos_mes?conta_id=eq.${id}&mes=eq.${ms}`,{
@@ -806,7 +824,7 @@ async function confirmarProgramar(id){
   const v = parseFloat(document.getElementById('modalValProgr')?.value) || modal._valor;
   const ms = modal._ms;
   const c = contas.find(x=>x.id===id);
-  await sbPost('agendamentos',{conta_id:id,mes:ms,valor:v,forma:statusMes[id]?.forma||c.forma_padrao,data_programada:dataFmt},'resolution=merge-duplicates');
+  await sbUpsert('agendamentos', `conta_id=eq.${id}&mes=eq.${ms}`, {conta_id:id,mes:ms,valor:v,forma:statusMes[id]?.forma||c.forma_padrao,data_programada:dataFmt});
   agendamentos[id] = {conta_id:id,mes:ms,valor:v,forma:statusMes[id]?.forma,data_programada:dataFmt};
   modal.remove();
   renderTodasContas();
@@ -819,7 +837,7 @@ async function programarSelecionados(){
     const inp = document.getElementById('val-'+c.id);
     const v = parseFloat(inp?.value || statusMes[c.id]?.valorPago) || c.valor;
     const dataProgr = `${String(c.dia_vencimento).padStart(2,'0')}/${String(mesAtual.m+1).padStart(2,'0')}/${mesAtual.y}`;
-    await sbPost('agendamentos',{conta_id:c.id,mes:ms,valor:v,forma:statusMes[c.id]?.forma||c.forma_padrao,data_programada:dataProgr},'resolution=merge-duplicates');
+    await sbUpsert('agendamentos', `conta_id=eq.${c.id}&mes=eq.${ms}`, {conta_id:c.id,mes:ms,valor:v,forma:statusMes[c.id]?.forma||c.forma_padrao,data_programada:dataProgr});
     agendamentos[c.id] = {conta_id:c.id,mes:ms,valor:v,forma:statusMes[c.id]?.forma,data_programada:dataProgr};
     statusMes[c.id].selecionado = false;
   }
@@ -1265,7 +1283,7 @@ async function confirmarProgramarRet(comp, ms, val){
   const parts = dataISO.split('-');
   const dataFmt = `${parts[2]}/${parts[1]}/${parts[0]}`;
   const valFinal = parseFloat(document.getElementById('inputValProgrRet')?.value)||val;
-  await sbPost('agendamentos',{mes:ms,valor:valFinal,forma:'ret',data_programada:dataFmt,componente:comp},'resolution=merge-duplicates');
+  await sbUpsert('agendamentos', `mes=eq.${ms}&componente=eq.${comp}&forma=eq.ret`, {mes:ms,valor:valFinal,forma:'ret',data_programada:dataFmt,componente:comp});
   agendRetMes[comp]={valor:valFinal,data:dataFmt};
   document.getElementById('modalProgr')?.remove();
   await atualizarRetirada();
@@ -1306,11 +1324,13 @@ async function confirmarProgramarRetSel(){
   for(const chave of retSels){
     const inp = document.getElementById('ret-val-'+chave);
     const val = parseFloat(inp?.value||0)||0;
-    await sbPost('agendamentos',{conta_id:null,mes:ms,valor:val,forma:'ret',data_programada:dataFmt,componente:chave},'resolution=merge-duplicates');
+    await sbUpsert('agendamentos', `mes=eq.${ms}&componente=eq.${chave}&forma=eq.ret`, {conta_id:null,mes:ms,valor:val,forma:'ret',data_programada:dataFmt,componente:chave});
+    agendRetMes[chave]={valor:val,data:dataFmt};
   }
   retSels.clear();
   document.getElementById('retTotalBar').style.display='none';
   document.getElementById('modalProgr')?.remove();
+  await atualizarRetirada();
   toast('Retiradas programadas para '+dataFmt+'!');
 }
 
@@ -1327,7 +1347,7 @@ async function enviarRetirada(comp,ms){
   const val=parseFloat(document.getElementById('ret-val-'+comp)?.value)||0;
   const data=document.getElementById('ret-data-'+comp)?.value||'';
   const dataFmt=data?data.split('-').reverse().join('/'):'';
-  await sbPost('retiradas',{componente:comp,mes:ms,valor:val,enviado:true,data_envio:dataFmt},'resolution=merge-duplicates');
+  await sbUpsert('retiradas', `componente=eq.${comp}&mes=eq.${ms}`, {componente:comp,mes:ms,valor:val,enviado:true,data_envio:dataFmt});
   dadosFinanceiros={};
   toast('Retirada confirmada!');
   await atualizarRetirada();
@@ -1335,7 +1355,7 @@ async function enviarRetirada(comp,ms){
 
 async function desfazerRetirada(comp,ms){
   const val=retiradaMes[comp]?.valor||0;
-  await sbPost('retiradas',{componente:comp,mes:ms,valor:val,enviado:false},'resolution=merge-duplicates');
+  await sbUpsert('retiradas', `componente=eq.${comp}&mes=eq.${ms}`, {componente:comp,mes:ms,valor:val,enviado:false});
   dadosFinanceiros={};
   toast('Desfeito');
   await atualizarRetirada();
@@ -1723,7 +1743,7 @@ async function processarAcaoChat(parsed){
 
   } else if(parsed.a==='retirada'){
     const ms=mesStr(mesRet.y,mesRet.m);
-    await sbPost('retiradas',{componente:parsed.componente,mes:ms,valor:parsed.valor,enviado:true,data_envio:parsed.data||hoje.toLocaleDateString('pt-BR')},'resolution=merge-duplicates');
+    await sbUpsert('retiradas', `componente=eq.${parsed.componente}&mes=eq.${ms}`, {componente:parsed.componente,mes:ms,valor:parsed.valor,enviado:true,data_envio:parsed.data||hoje.toLocaleDateString('pt-BR')});
     retiradaMes[parsed.componente]={valor:parsed.valor,enviado:true,data:parsed.data};
     await abaterSaldo('llg',parsed.valor);
     await reporSaldo('pessoal',parsed.valor);
