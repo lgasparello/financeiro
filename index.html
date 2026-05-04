@@ -1855,7 +1855,18 @@ LUCROS LÍQUIDOS REAIS (últimos 4 meses): ${lucrosStr}
 AÇÕES DISPONÍVEIS — responda SOMENTE o JSON correspondente, sem markdown:
 
 1. REGISTRAR GASTO:
-{"a":"reg","desc":"nome","valor":0.00,"conta":"empresa|pessoal","mes":"Abril","cat":"Custo Variável|Custo Fixo|Imposto|Retirada|Receita","cc":"cv|cf|im|rc","forma":"deb|crt","msg":"confirmação"}
+"cat" é a categoria do gasto. Escolha UMA das seguintes (idênticas às do app):
+- "Alimentação" — comida, restaurante, mercado, padaria, doces, lanches
+- "Combustível" — gasolina, álcool, pedágio, estacionamento avulso
+- "Lazer" — cinema, show, viagem, passeio, bar
+- "Pet" — ração, veterinário, banho, pet shop
+- "Compras" — roupas, marketplace, eletrônicos, presentes
+- "Farmácia" — remédios, suplementos
+- "Outros" — qualquer coisa que não encaixa nas anteriores
+
+NUNCA use "Custo Variável", "Custo Fixo", "Imposto", "Receita" como categoria — esses são tipos contábeis, não categorias de gasto.
+
+{"a":"reg","desc":"nome","valor":0.00,"conta":"empresa|pessoal","mes":"Abril","cat":"Alimentação|Combustível|Lazer|Pet|Compras|Farmácia|Outros","forma":"deb|crt","msg":"confirmação"}
 
 2. ADICIONAR CONTA RECORRENTE:
 mes_inicio é o primeiro mês em que a conta aparece (formato "YYYY-MM"). Se não informado pelo usuário, use o mês atual.
@@ -2163,7 +2174,7 @@ async function enviarFoto(input){
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
         model:'claude-sonnet-4-6',max_tokens:600,
-        system:sysFoto+'\nO usuário enviou uma foto de nota fiscal ou cupom. Extraia o valor total, estabelecimento e categorize o gasto. Responda SOMENTE em JSON: {"a":"reg","desc":"nome estabelecimento","valor":0.00,"conta":"pessoal","mes":"Abril","cat":"categoria","cc":"cv","msg":"confirmação"}',
+        system:sysFoto+'\nO usuário enviou uma foto de nota fiscal ou cupom. Extraia o valor total, estabelecimento e categorize o gasto. A categoria deve ser UMA dessas: "Alimentação", "Combustível", "Lazer", "Pet", "Compras", "Farmácia" ou "Outros". Responda SOMENTE em JSON: {"a":"reg","desc":"nome estabelecimento","valor":0.00,"conta":"pessoal","mes":"Abril","cat":"Alimentação|Combustível|Lazer|Pet|Compras|Farmácia|Outros","msg":"confirmação"}',
         messages:[{role:'user',content:[
           {type:'image',source:{type:'base64',media_type:file.type,data:base64}},
           {type:'text',text:'Registre este gasto da nota fiscal'}
