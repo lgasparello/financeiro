@@ -1554,7 +1554,14 @@ async function enviarRetirada(comp,ms){
   const val=parseFloat(document.getElementById('ret-val-'+comp)?.value)||0;
   const data=document.getElementById('ret-data-'+comp)?.value||'';
   const dataFmt=data?data.split('-').reverse().join('/'):'';
+  // Verifica se já estava enviada (idempotência: não duplicar saldo)
+  const jaEnviada = retiradaMes[comp]?.enviado === true;
   await sbUpsert('retiradas', `componente=eq.${comp}&mes=eq.${ms}`, {componente:comp,mes:ms,valor:val,enviado:true,data_envio:dataFmt});
+  // Movimenta saldo só se ainda não estava marcada como enviada
+  if(!jaEnviada && val > 0){
+    await abaterSaldo('llg', val);
+    await reporSaldo('pessoal', val);
+  }
   dadosFinanceiros={};
   toast('Retirada confirmada!');
   await atualizarRetirada();
@@ -1562,9 +1569,15 @@ async function enviarRetirada(comp,ms){
 
 async function desfazerRetirada(comp,ms){
   const compNome = componentesRet.find(c=>c.chave===comp)?.nome || comp;
-  if(!confirm(`Desfazer retirada de "${compNome}"?`)) return;
+  if(!confirm(`Desfazer retirada de "${compNome}"?\n\nO valor voltará para a LLG e sairá do pessoal.`)) return;
   const val=retiradaMes[comp]?.valor||0;
+  const estavaEnviada = retiradaMes[comp]?.enviado === true;
   await sbUpsert('retiradas', `componente=eq.${comp}&mes=eq.${ms}`, {componente:comp,mes:ms,valor:val,enviado:false});
+  // Estorna saldo: o que saiu da LLG volta, o que entrou no pessoal sai
+  if(estavaEnviada && val > 0){
+    await reporSaldo('llg', val);
+    await abaterSaldo('pessoal', val);
+  }
   dadosFinanceiros={};
   toast('Desfeito');
   await atualizarRetirada();
