@@ -247,6 +247,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         <option value="Pet">Pet</option>
         <option value="Compras">Compras</option>
         <option value="Farmácia">Farmácia</option>
+        <option value="Filhos">Filhos</option>
         <option value="Outros">Outros</option>
       </select>
       <select id="grConta" style="flex:1;padding:8px 10px;border-radius:var(--rs);border:1px solid var(--border2);background:var(--bg);color:var(--text);font-size:13px;font-family:inherit">
@@ -362,6 +363,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
             <button class="fbtn" id="catBtn-laz" onclick="filtrarCat('Lazer',this)">Lazer</button>
             <button class="fbtn" id="catBtn-pet" onclick="filtrarCat('Pet',this)">Pet</button>
             <button class="fbtn" id="catBtn-comp" onclick="filtrarCat('Compras',this)">Compras</button>
+            <button class="fbtn" id="catBtn-farm" onclick="filtrarCat('Farmácia',this)">Farmácia</button>
+            <button class="fbtn" id="catBtn-fil" onclick="filtrarCat('Filhos',this)">Filhos</button>
             <button class="fbtn" id="catBtn-out" onclick="filtrarCat('Outros',this)">Outros</button>
           </div>
           <div id="relGastos"><div class="loading">Carregando...</div></div>
@@ -467,7 +470,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
           <option value="Pet">Pet</option>
           <option value="Compras">Compras</option>
           <option value="Farmácia">Farmácia</option>
-          <option value="Outros">Outros</option>
+        <option value="Filhos">Filhos</option>
+        <option value="Outros">Outros</option>
         </select>
         <select id="grConta" style="flex:1;padding:8px 10px;border-radius:var(--rs);border:1px solid var(--border2);background:var(--bg);color:var(--text);font-size:13px;font-family:inherit">
           <option value="pessoal">Pessoal</option>
@@ -1862,11 +1866,12 @@ AÇÕES DISPONÍVEIS — responda SOMENTE o JSON correspondente, sem markdown:
 - "Pet" — ração, veterinário, banho, pet shop
 - "Compras" — roupas, marketplace, eletrônicos, presentes
 - "Farmácia" — remédios, suplementos
+- "Filhos" — atividades extras dos filhos (esporte, ballet, presentes pra eles, festinha, material escolar avulso)
 - "Outros" — qualquer coisa que não encaixa nas anteriores
 
 NUNCA use "Custo Variável", "Custo Fixo", "Imposto", "Receita" como categoria — esses são tipos contábeis, não categorias de gasto.
 
-{"a":"reg","desc":"nome","valor":0.00,"conta":"empresa|pessoal","mes":"Abril","cat":"Alimentação|Combustível|Lazer|Pet|Compras|Farmácia|Outros","forma":"deb|crt","msg":"confirmação"}
+{"a":"reg","desc":"nome","valor":0.00,"conta":"empresa|pessoal","mes":"Abril","cat":"Alimentação|Combustível|Lazer|Pet|Compras|Farmácia|Filhos|Outros","forma":"deb|crt","msg":"confirmação"}
 
 2. ADICIONAR CONTA RECORRENTE:
 mes_inicio é o primeiro mês em que a conta aparece (formato "YYYY-MM"). Se não informado pelo usuário, use o mês atual.
@@ -2174,7 +2179,7 @@ async function enviarFoto(input){
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
         model:'claude-sonnet-4-6',max_tokens:600,
-        system:sysFoto+'\nO usuário enviou uma foto de nota fiscal ou cupom. Extraia o valor total, estabelecimento e categorize o gasto. A categoria deve ser UMA dessas: "Alimentação", "Combustível", "Lazer", "Pet", "Compras", "Farmácia" ou "Outros". Responda SOMENTE em JSON: {"a":"reg","desc":"nome estabelecimento","valor":0.00,"conta":"pessoal","mes":"Abril","cat":"Alimentação|Combustível|Lazer|Pet|Compras|Farmácia|Outros","msg":"confirmação"}',
+        system:sysFoto+'\nO usuário enviou uma foto de nota fiscal ou cupom. Extraia o valor total, estabelecimento e categorize o gasto. A categoria deve ser UMA dessas: "Alimentação", "Combustível", "Lazer", "Pet", "Compras", "Farmácia", "Filhos" ou "Outros". Responda SOMENTE em JSON: {"a":"reg","desc":"nome estabelecimento","valor":0.00,"conta":"pessoal","mes":"Abril","cat":"Alimentação|Combustível|Lazer|Pet|Compras|Farmácia|Filhos|Outros","msg":"confirmação"}',
         messages:[{role:'user',content:[
           {type:'image',source:{type:'base64',media_type:file.type,data:base64}},
           {type:'text',text:'Registre este gasto da nota fiscal'}
