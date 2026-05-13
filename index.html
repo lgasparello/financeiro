@@ -1072,12 +1072,11 @@ async function calcularMes(ms){
   // Garantir que contas estão carregadas
   if(!contas.length) await carregarContas();
   
-  const mesNome = `${MESES_PT[parseInt(ms.split('-')[1])-1]} ${ms.split('-')[0]}`;
   const [recsRaw, impsRaw, pagsRaw, gastosRaw, retiradasRaw] = await Promise.all([
     sbGet('receitas', `select=*&mes=eq.${ms}`),
     sbGet('impostos', `select=*&mes=eq.${ms}`),
     sbGet('pagamentos_mes', `select=*&mes=eq.${ms}&pago=eq.true`),
-    sbGet('gastos', `select=*&mes=eq.${encodeURIComponent(mesNome)}`),
+    sbGet('gastos', `select=*&mes=eq.${ms}`),
     sbGet('retiradas', `select=*&mes=eq.${ms}&enviado=eq.true`)
   ]);
   const receitas = Array.isArray(recsRaw) ? recsRaw : [];
@@ -1859,6 +1858,8 @@ LUCROS LÍQUIDOS REAIS (últimos 4 meses): ${lucrosStr}
 AÇÕES DISPONÍVEIS — responda SOMENTE o JSON correspondente, sem markdown:
 
 1. REGISTRAR GASTO:
+"mes" deve ser SEMPRE no formato "YYYY-MM" (exemplo: "2026-05" para maio de 2026). Se o usuário não especificar mês, use o mês atual.
+
 "cat" é a categoria do gasto. Escolha UMA das seguintes (idênticas às do app):
 - "Alimentação" — comida, restaurante, mercado, padaria, doces, lanches
 - "Combustível" — gasolina, álcool, pedágio, estacionamento avulso
@@ -1871,7 +1872,7 @@ AÇÕES DISPONÍVEIS — responda SOMENTE o JSON correspondente, sem markdown:
 
 NUNCA use "Custo Variável", "Custo Fixo", "Imposto", "Receita" como categoria — esses são tipos contábeis, não categorias de gasto.
 
-{"a":"reg","desc":"nome","valor":0.00,"conta":"empresa|pessoal","mes":"Abril","cat":"Alimentação|Combustível|Lazer|Pet|Compras|Farmácia|Filhos|Outros","forma":"deb|crt","msg":"confirmação"}
+{"a":"reg","desc":"nome","valor":0.00,"conta":"empresa|pessoal","mes":"YYYY-MM","cat":"Alimentação|Combustível|Lazer|Pet|Compras|Farmácia|Filhos|Outros","forma":"deb|crt","msg":"confirmação"}
 
 2. ADICIONAR CONTA RECORRENTE:
 mes_inicio é o primeiro mês em que a conta aparece (formato "YYYY-MM"). Se não informado pelo usuário, use o mês atual.
@@ -1985,10 +1986,28 @@ async function sendMsg(){
 }
 
 async function processarAcaoChat(parsed){
+// Normaliza qualquer formato de "mes" que venha da IA para YYYY-MM
+function normalizarMesIA(m){
+  if(!m) return mesStr(mesAtual.y, mesAtual.m);
+  // Já está em YYYY-MM
+  if(/^\d{4}-\d{2}$/.test(m)) return m;
+  // "Abril 2026" ou só "Abril"
+  const meses = {'Janeiro':'01','Fevereiro':'02','Março':'03','Abril':'04','Maio':'05','Junho':'06','Julho':'07','Agosto':'08','Setembro':'09','Outubro':'10','Novembro':'11','Dezembro':'12'};
+  const partes = m.split(' ');
+  const mNum = meses[partes[0]];
+  if(mNum){
+    const ano = partes[1] || mesAtual.y;
+    return `${ano}-${mNum}`;
+  }
+  // Fallback: mês atual
+  return mesStr(mesAtual.y, mesAtual.m);
+}
+
   if(parsed.a==='reg'){
     const forma=parsed.forma||'deb';
+    const mesISO = normalizarMesIA(parsed.mes);
     addMsg(`<b>${parsed.desc}</b> <span class="bdt ${parsed.conta==='empresa'?'bd-l':'bd-p'}">${parsed.conta==='empresa'?'LLG':'Pes.'}</span><br><span style="color:var(--red)">-${fmtV(parsed.valor)}</span> · ${parsed.cat}<br><span style="font-size:12px;color:var(--green)">${parsed.msg}</span>`,'g');
-    await sbPost('gastos',{descricao:parsed.desc,valor:parsed.valor,conta:parsed.conta,mes:parsed.mes,categoria:parsed.cat,forma_pagamento:'Via chat',data_lancamento:hoje.toLocaleDateString('pt-BR')});
+    await sbPost('gastos',{descricao:parsed.desc,valor:parsed.valor,conta:parsed.conta,mes:mesISO,categoria:parsed.cat,forma_pagamento:'Via chat',data_lancamento:hoje.toLocaleDateString('pt-BR')});
     if(forma!=='crt'){
       const contaSaldo=parsed.conta==='empresa'?'llg':'pessoal';
       await abaterSaldo(contaSaldo,parsed.valor);
@@ -2151,7 +2170,7 @@ async function salvarGastoRapido(){
   if(!desc || desc.length < 2){toast('Descrição precisa ter ao menos 2 caracteres');return;}
   if(!valor || isNaN(valor) || valor <= 0){toast('Valor precisa ser maior que zero');return;}
   if(valor > 100000 && !confirm(`Confirmar gasto de ${fmtV(valor)}? Está acima de R$100.000.`)) return;
-  await sbPost('gastos',{descricao:desc,valor,conta,mes:MESES_PT[mesAtual.m]+' '+mesAtual.y,categoria:cat,forma_pagamento:'Débito',data_lancamento:hoje.toLocaleDateString('pt-BR')});
+  await sbPost('gastos',{descricao:desc,valor,conta,mes:mesStr(mesAtual.y,mesAtual.m),categoria:cat,forma_pagamento:'Débito',data_lancamento:hoje.toLocaleDateString('pt-BR')});
   await abaterSaldo(conta==='empresa'?'llg':'pessoal',valor);
   // Mostrar no chat
   addMsg(`<b>${desc}</b> <span class="bdt ${conta==='empresa'?'bd-l':'bd-p'}">${conta==='empresa'?'LLG':'Pes.'}</span><br><span style="color:var(--red)">-${fmtV(valor)}</span> · ${cat}`,'g');
@@ -2191,8 +2210,9 @@ async function enviarFoto(input){
     let parsed=null;
     try{parsed=JSON.parse(resp.replace(/```json|```/g,'').trim());}catch(e){}
     if(parsed&&parsed.a==='reg'){
+      const mesISONota = normalizarMesIA(parsed.mes);
       addMsg(`<b>${parsed.desc}</b> <span class="bdt bd-p">Pes.</span><br><span style="color:var(--red)">-${fmtV(parsed.valor)}</span> · ${parsed.cat}<br><span style="font-size:12px;color:var(--green)">${parsed.msg}</span>`,'g');
-      await sbPost('gastos',{descricao:parsed.desc,valor:parsed.valor,conta:parsed.conta||'pessoal',mes:parsed.mes,categoria:parsed.cat,forma_pagamento:'Nota fiscal',data_lancamento:hoje.toLocaleDateString('pt-BR')});
+      await sbPost('gastos',{descricao:parsed.desc,valor:parsed.valor,conta:parsed.conta||'pessoal',mes:mesISONota,categoria:parsed.cat,forma_pagamento:'Nota fiscal',data_lancamento:hoje.toLocaleDateString('pt-BR')});
       await abaterSaldo('pessoal',parsed.valor);
       toast('Nota registrada!');
     }else{
@@ -2330,8 +2350,7 @@ async function carregarGraficos(){
 
   // 3. Gastos pessoais por categoria (período selecionado)
   const gastosPromises = meses.map(ms => {
-    const mesNome = `${MESES_PT[parseInt(ms.split('-')[1])-1]} ${ms.split('-')[0]}`;
-    return sbGet('gastos', `select=*&mes=eq.${encodeURIComponent(mesNome)}&conta=eq.pessoal`);
+    return sbGet('gastos', `select=*&mes=eq.${ms}&conta=eq.pessoal`);
   });
   const gastosResultados = await Promise.all(gastosPromises);
   const porCat = {};
