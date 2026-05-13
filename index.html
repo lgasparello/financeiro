@@ -1222,7 +1222,9 @@ async function carregarPainel(){
   const totalRetPes = Array.isArray(retiradasPes) ? retiradasPes.reduce((s,r)=>s+r.valor,0) : 0;
 
   const labelMes = mesLabel(mesPainel.y, mesPainel.m);
-  const limiteRetirada = dadosAnt.lucro;
+  // Limite usa projetado se mês anterior ainda tem CF pendente (não fechou),
+  // senão usa real. Mesma regra do getLucroAnterior.
+  const limiteRetirada = (dadosAnt.cfPendente > 0) ? dadosAnt.lucroProjetado : dadosAnt.lucro;
 
   // Helper pra mostrar diff vs mês anterior
   const diffStr = (atual, anterior) => {
@@ -1296,8 +1298,10 @@ async function getLucroAnterior(y, m){
   const mAnterior = new Date(y, m-1);
   const ms = mesStr(mAnterior.getFullYear(), mAnterior.getMonth());
   const dados = await calcularMes(ms);
-  // Se lucro real positivo, usa ele. Senão, usa projetado.
-  return dados.lucro > 0 ? dados.lucro : dados.lucroProjetado;
+  // Se o mês ainda tem CF pendente (não fechou), usa projetado.
+  // Se está tudo pago, usa real.
+  if(dados.cfPendente > 0) return dados.lucroProjetado;
+  return dados.lucro;
 }
 let componentesRet = [];
 let retiradaMes={};
