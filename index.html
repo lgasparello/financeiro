@@ -1071,50 +1071,102 @@ async function calcularMes(ms){
   if(dadosFinanceiros[ms]) return dadosFinanceiros[ms];
   // Garantir que contas estão carregadas
   if(!contas.length) await carregarContas();
-  
-  const [recsRaw, impsRaw, pagsRaw, gastosRaw, retiradasRaw] = await Promise.all([
+
+  // Componentes de retirada (precisamos pra projetar retiradas fixas não enviadas)
+  if(!componentesRet.length){
+    const compRaw = await sbGet('componentes_retirada','select=*&ativo=eq.true&order=id');
+    componentesRet = Array.isArray(compRaw) ? compRaw : [];
+  }
+
+  const [recsRaw, impsRaw, pagsTodosRaw, gastosRaw, retiradasRaw] = await Promise.all([
     sbGet('receitas', `select=*&mes=eq.${ms}`),
     sbGet('impostos', `select=*&mes=eq.${ms}`),
-    sbGet('pagamentos_mes', `select=*&mes=eq.${ms}&pago=eq.true`),
+    sbGet('pagamentos_mes', `select=*&mes=eq.${ms}`),
     sbGet('gastos', `select=*&mes=eq.${ms}`),
-    sbGet('retiradas', `select=*&mes=eq.${ms}&enviado=eq.true`)
+    sbGet('retiradas', `select=*&mes=eq.${ms}`)
   ]);
   const receitas = Array.isArray(recsRaw) ? recsRaw : [];
   const impostos = Array.isArray(impsRaw) ? impsRaw : [];
-  const pagamentos = Array.isArray(pagsRaw) ? pagsRaw : [];
+  const pagsTodos = Array.isArray(pagsTodosRaw) ? pagsTodosRaw : [];
+  const pagamentos = pagsTodos.filter(p=>p.pago);
   const gastos = Array.isArray(gastosRaw) ? gastosRaw : [];
-  const retiradas = Array.isArray(retiradasRaw) ? retiradasRaw : [];
+  const retiradasAll = Array.isArray(retiradasRaw) ? retiradasRaw : [];
+  const retiradas = retiradasAll.filter(r=>r.enviado);
 
-  const totalReceita = receitas.reduce((s,r)=>s+r.valor,0);
+  // === REAIS ===
+  // Receita real = só as recebidas (recebido=true ou campo ausente)
+  const receitasRecebidas = receitas.filter(r => r.recebido !== false);
+  const totalReceitaReal = receitasRecebidas.reduce((s,r)=>s+r.valor,0);
+  // Receita prevista (não recebida ainda)
+  const receitasPrevistas = receitas.filter(r => r.recebido === false);
+  const totalReceitaPrev = receitasPrevistas.reduce((s,r)=>s+r.valor,0);
+
   const totalImpostos = impostos.reduce((s,i)=>s+i.valor,0);
   const totalRetirado = retiradas.reduce((s,r)=>s+r.valor,0);
 
-  // CF = contas fixas empresa pagas (operacional)
-  const cfEmpresa = pagamentos
+  // CF empresa pago (operacional real)
+  const cfEmpresaReal = pagamentos
     .filter(p=>{ const c=contas.find(x=>x.id===p.conta_id); return c&&c.tipo==='empresa'; })
     .reduce((s,p)=>{ const c=contas.find(x=>x.id===p.conta_id); return s+(p.valor_pago||c?.valor||0); },0);
 
-  // CF via retiradas fixas (Pro Labore, Plano, Moto) — não estão mais nas Contas mas são custo real
-  const cfRetiradas = retiradas
+  // CF retiradas fixas reais (PL+PS+Moto enviadas, exceto lucros)
+  const cfRetiradasReal = retiradas
     .filter(r=>r.componente!=='lucros')
     .reduce((s,r)=>s+r.valor,0);
 
-  // CV = gastos variáveis empresa
+  // CV empresa real
   const cvEmpresa = gastos
     .filter(g=>g.conta==='empresa')
     .reduce((s,g)=>s+g.valor,0);
 
-  // Lucro = Receita - CF operacional - CF retiradas fixas - CV - Impostos
-  const cfTotal = cfEmpresa + cfRetiradas;
-  const lucroLiq = totalReceita - cfTotal - cvEmpresa - totalImpostos;
+  // === PROJETADOS (faltam pagar) ===
+  // CF empresa ainda não pago: pega contas fixas empresa ativas no mês, exclui as já pagas
+  const idsJaPagos = new Set(pagamentos.map(p=>p.conta_id));
+  const [py, pm] = ms.split('-').map(Number);
+  const cfEmpresaPendente = contas
+    .filter(c=>c.tipo==='empresa' && contaAtivaNoMes(c, py, pm-1) && !idsJaPagos.has(c.id))
+    .reduce((s,c)=>s+(c.valor||0),0);
 
-  console.log(`[${ms}] Receita:${totalReceita} CF:${cfEmpresa} CFRet:${cfRetiradas} CV:${cvEmpresa} Imp:${totalImpostos} Lucro:${lucroLiq}`);
+  // Retiradas fixas ainda não enviadas (PL+PS+Moto)
+  const compEnviados = new Set(retiradas.map(r=>r.componente));
+  const cfRetiradasPendente = componentesRet
+    .filter(c=>c.chave!=='lucros' && !compEnviados.has(c.chave))
+    .filter(c=>{
+      // respeita mes_fim do componente (Moto tem fim em jun/26)
+      if(c.mes_fim){
+        const [fy,fm]=c.mes_fim.split('-').map(Number);
+        if(new Date(py,pm-1) > new Date(fy,fm-1)) return false;
+      }
+      return true;
+    })
+    .reduce((s,c)=>s+(c.valor||0),0);
+
+  // === TOTAIS ===
+  const cfReal = cfEmpresaReal + cfRetiradasReal;
+  const cfTotalProjetado = cfReal + cfEmpresaPendente + cfRetiradasPendente;
+  const receitaTotalProjetada = totalReceitaReal + totalReceitaPrev;
+
+  // Lucro real: só com o que efetivamente entrou e saiu
+  const lucroReal = totalReceitaReal - cfReal - cvEmpresa - totalImpostos;
+  // Lucro projetado: o que vai sobrar se tudo previsto se confirmar
+  const lucroProjetado = receitaTotalProjetada - cfTotalProjetado - cvEmpresa - totalImpostos;
+
+  console.log(`[${ms}] Receita R:${totalReceitaReal} P:${totalReceitaPrev} | CF R:${cfReal} Pend:${cfEmpresaPendente+cfRetiradasPendente} | CV:${cvEmpresa} | Imp:${totalImpostos} | Lucro R:${lucroReal} Proj:${lucroProjetado}`);
 
   const result = {
-    receita: totalReceita, impostos: totalImpostos,
-    cf: cfTotal, cv: cvEmpresa,
-    lucro: lucroLiq, retirado: totalRetirado,
-    receitaItens: receitas, impostosItens: impostos
+    receita: totalReceitaReal,
+    receitaPrevista: totalReceitaPrev,
+    receitaProjetada: receitaTotalProjetada,
+    impostos: totalImpostos,
+    cf: cfReal,
+    cfPendente: cfEmpresaPendente + cfRetiradasPendente,
+    cfProjetado: cfTotalProjetado,
+    cv: cvEmpresa,
+    lucro: lucroReal,
+    lucroProjetado: lucroProjetado,
+    retirado: totalRetirado,
+    receitaItens: receitas,
+    impostosItens: impostos
   };
   dadosFinanceiros[ms] = result;
   return result;
@@ -1198,9 +1250,14 @@ async function carregarPainel(){
   document.getElementById('painelMesEmpresa').innerHTML=`
     <div class="sh">${labelMes} — empresa</div>
     <div class="grid2">
-      <div class="mc"><div class="mc-lbl">Receita</div><div class="mc-val" style="color:var(--blue)">${fmtV(dadosMes.receita)}</div>${diffStrPositivo(dadosMes.receita, dadosAnt.receita)}</div>
-      <div class="mc"><div class="mc-lbl">Lucro líquido</div><div class="mc-val" style="color:${dadosMes.lucro>=0?'var(--green)':'var(--red)'}">${fmtV(dadosMes.lucro)}</div>${diffStrPositivo(dadosMes.lucro, dadosAnt.lucro)}</div>
-      <div class="mc"><div class="mc-lbl">Custo fixo</div><div class="mc-val" style="color:var(--amber)">${fmtV(dadosMes.cf)}</div>${diffStr(dadosMes.cf, dadosAnt.cf)}</div>
+      <div class="mc"><div class="mc-lbl">Receita ${dadosMes.receitaPrevista>0?'(recebida)':''}</div><div class="mc-val" style="color:var(--blue)">${fmtV(dadosMes.receita)}</div>${dadosMes.receitaPrevista>0?`<div class="mc-sub" style="color:var(--blue)">+ ${fmtV(dadosMes.receitaPrevista)} prevista</div>`:diffStrPositivo(dadosMes.receita, dadosAnt.receita)}</div>
+      <div class="mc"><div class="mc-lbl">Lucro líquido (real)</div><div class="mc-val" style="color:${dadosMes.lucro>=0?'var(--green)':'var(--red)'}">${fmtV(dadosMes.lucro)}</div>${diffStrPositivo(dadosMes.lucro, dadosAnt.lucro)}</div>
+      <div class="mc" style="background:var(--purple-l);border-color:var(--purple-m)">
+        <div class="mc-lbl" style="color:var(--purple)">📊 Lucro projetado</div>
+        <div class="mc-val" style="color:var(--purple)">${fmtV(dadosMes.lucroProjetado)}</div>
+        <div class="mc-sub" style="color:var(--purple)">Se tudo previsto for pago</div>
+      </div>
+      <div class="mc"><div class="mc-lbl">Custo fixo ${dadosMes.cfPendente>0?'(pago)':''}</div><div class="mc-val" style="color:var(--amber)">${fmtV(dadosMes.cf)}</div>${dadosMes.cfPendente>0?`<div class="mc-sub" style="color:var(--amber)">+ ${fmtV(dadosMes.cfPendente)} pendente</div>`:diffStr(dadosMes.cf, dadosAnt.cf)}</div>
       <div class="mc"><div class="mc-lbl">Custo variável</div><div class="mc-val" style="color:var(--amber)">${fmtV(dadosMes.cv)}</div>${diffStr(dadosMes.cv, dadosAnt.cv)}</div>
       <div class="mc"><div class="mc-lbl">Impostos</div><div class="mc-val" style="color:var(--red)">${fmtV(dadosMes.impostos)}</div>${diffStr(dadosMes.impostos, dadosAnt.impostos)}</div>
       <div class="mc"><div class="mc-lbl">Total retirado</div><div class="mc-val" style="color:var(--purple)">${fmtV(dadosMes.retirado)}</div></div>
@@ -1239,7 +1296,8 @@ async function getLucroAnterior(y, m){
   const mAnterior = new Date(y, m-1);
   const ms = mesStr(mAnterior.getFullYear(), mAnterior.getMonth());
   const dados = await calcularMes(ms);
-  return dados.lucro;
+  // Se lucro real positivo, usa ele. Senão, usa projetado.
+  return dados.lucro > 0 ? dados.lucro : dados.lucroProjetado;
 }
 let componentesRet = [];
 let retiradaMes={};
@@ -1906,6 +1964,22 @@ Use o id que aparece em GASTOS VARIÁVEIS RECENTES.
 10. EDITAR GASTO VARIÁVEL (corrigir valor, descrição ou categoria):
 {"a":"edit_gasto","id":0,"campo":"valor|descricao|categoria","valor_novo":"novo valor","msg":"confirmação"}
 
+11. REGISTRAR RECEITA REAL (já recebida — dinheiro caiu na conta LLG):
+Use SEMPRE que o usuário falar que recebeu um valor da empresa cliente.
+"mes" no formato YYYY-MM. "data" no formato dd/mm/yyyy.
+Repõe o saldo LLG automaticamente.
+{"a":"add_receita","cliente":"nome cliente","descricao":"serviço","valor":0.00,"mes":"YYYY-MM","data":"dd/mm/yyyy","msg":"confirmação"}
+
+12. REGISTRAR RECEITA PREVISTA (ainda não recebida, mas previsão de receber):
+Use quando o usuário falar de previsão futura (ex: "Global vai pagar 20k em julho").
+NÃO movimenta saldo. Aparece como projeção até ser marcada como recebida.
+{"a":"add_receita_prevista","cliente":"nome cliente","descricao":"serviço","valor":0.00,"mes":"YYYY-MM","msg":"confirmação"}
+
+13. MARCAR RECEITA COMO RECEBIDA (confirma quando o dinheiro caiu):
+Use quando o usuário falar que uma receita prevista foi recebida.
+Repõe o saldo LLG automaticamente.
+{"a":"marcar_receita_recebida","id":0,"data":"dd/mm/yyyy","msg":"confirmação"}
+
 PARA PERGUNTAS: responda diretamente, máximo 4 linhas, objetivo.`;
 }
 
@@ -1932,9 +2006,10 @@ async function sendMsg(){
   try{
     // Buscar contexto dinâmico do banco
     const ms = mesStr(mesAtual.y, mesAtual.m);
-    const [gastosRec, pagsRec] = await Promise.all([
+    const [gastosRec, pagsRec, recPrev] = await Promise.all([
       sbGet('gastos',`select=*&order=created_at.desc&limit=30`),
-      sbGet('pagamentos_mes',`select=*&mes=eq.${ms}&pago=eq.true&order=data_pagamento.desc`)
+      sbGet('pagamentos_mes',`select=*&mes=eq.${ms}&pago=eq.true&order=data_pagamento.desc`),
+      sbGet('receitas',`select=*&recebido=eq.false&order=mes.asc&limit=20`)
     ]);
     const ctxGastos = Array.isArray(gastosRec) ? gastosRec
       .map(g=>`id=${g.id} | ${g.data_lancamento} | ${g.descricao} | R$${g.valor} | ${g.categoria} | ${g.conta}`)
@@ -1942,10 +2017,14 @@ async function sendMsg(){
     const ctxPagas = Array.isArray(pagsRec) ? pagsRec
       .map(p=>{ const c=contas.find(x=>x.id===p.conta_id); return c?`${p.data_pagamento||'?'} | ${c.nome} | R$${p.valor_pago} | ${p.forma==='pes'?'débito pessoal':p.forma==='llg'?'débito empresa':'cartão'} | ${c.tipo}`:null; })
       .filter(Boolean).join('\n') : '';
+    const ctxRecPrev = Array.isArray(recPrev) ? recPrev
+      .map(r=>`id=${r.id} | ${r.mes} | ${r.cliente} | ${r.descricao||''} | R$${r.valor}`)
+      .join('\n') : '';
     const sysBase = await montarSysPrompt();
     const sysComCtx = sysBase +
       `\n\nCONTAS PAGAS ESTE MÊS (${mesLabel(mesAtual.y,mesAtual.m)}) — data | nome | valor | forma | tipo:\n${ctxPagas||'nenhuma'}` +
-      `\n\nGASTOS VARIÁVEIS RECENTES — data | descrição | valor | categoria | conta:\n${ctxGastos||'nenhum'}`;
+      `\n\nGASTOS VARIÁVEIS RECENTES — data | descrição | valor | categoria | conta:\n${ctxGastos||'nenhum'}` +
+      `\n\nRECEITAS PREVISTAS (não recebidas) — id | mês | cliente | descrição | valor:\n${ctxRecPrev||'nenhuma'}`;
     const r=await fetch('/api/chat',{
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:800,system:sysComCtx,messages:chatHistory})
@@ -2113,6 +2192,55 @@ function normalizarMesIA(m){
     await sbPatch('gastos', `id=eq.${parsed.id}`, dados);
     addMsg(`✅ ${parsed.msg}`,'g');
     toast('Gasto atualizado!');
+
+  } else if(parsed.a==='add_receita'){
+    const mesISO = normalizarMesIA(parsed.mes);
+    await sbPost('receitas', {
+      mes: mesISO,
+      cliente: parsed.cliente,
+      descricao: parsed.descricao || 'Serviço',
+      valor: parsed.valor,
+      recebido: true,
+      data_recebimento: parsed.data || hoje.toLocaleDateString('pt-BR')
+    });
+    await reporSaldo('llg', parsed.valor);
+    dadosFinanceiros = {};
+    addMsg(`✅ ${parsed.msg}<br><span style="font-size:12px;color:var(--text3)">${parsed.cliente} · ${fmtV(parsed.valor)} · ${mesISO}</span>`,'g');
+    toast('Receita registrada!');
+
+  } else if(parsed.a==='add_receita_prevista'){
+    const mesISO = normalizarMesIA(parsed.mes);
+    await sbPost('receitas', {
+      mes: mesISO,
+      cliente: parsed.cliente,
+      descricao: parsed.descricao || 'Serviço',
+      valor: parsed.valor,
+      recebido: false,
+      data_recebimento: null
+    });
+    dadosFinanceiros = {};
+    addMsg(`✅ ${parsed.msg}<br><span style="font-size:12px;color:var(--text3)">📅 Previsão: ${parsed.cliente} · ${fmtV(parsed.valor)} · ${mesISO}</span>`,'g');
+    toast('Receita prevista!');
+
+  } else if(parsed.a==='marcar_receita_recebida'){
+    const recData = await sbGet('receitas', `select=*&id=eq.${parsed.id}`);
+    if(!Array.isArray(recData) || !recData.length){
+      addMsg(`❌ Receita id ${parsed.id} não encontrada.`,'a');
+      return;
+    }
+    const r = recData[0];
+    if(r.recebido){
+      addMsg(`⚠ Essa receita já estava marcada como recebida.`,'a');
+      return;
+    }
+    await sbPatch('receitas', `id=eq.${parsed.id}`, {
+      recebido: true,
+      data_recebimento: parsed.data || hoje.toLocaleDateString('pt-BR')
+    });
+    await reporSaldo('llg', r.valor);
+    dadosFinanceiros = {};
+    addMsg(`✅ ${parsed.msg}<br><span style="font-size:12px;color:var(--text3)">${r.cliente} · ${fmtV(r.valor)} recebido</span>`,'g');
+    toast('Receita confirmada!');
   }
 }
 
