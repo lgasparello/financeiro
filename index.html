@@ -1679,21 +1679,46 @@ function labelMesISO(iso){
 }
 
 async function carregarRelatorio(){
-  // Parcelamentos
-  const parc=contas.filter(c=>c.parcela_total&&c.mes_fim);
+  // Parcelamentos: conta como parcelado se tem mes_inicio + mes_fim (mais de 1 mês de intervalo)
+  // ou se tem parcela_total explicito
+  const parc=contas.filter(c=>{
+    if(!c.mes_fim) return false;
+    if(c.parcela_total) return true;
+    // Detecta parcelamento automático pelo intervalo
+    if(c.mes_inicio){
+      const [iy,im]=c.mes_inicio.split('-').map(Number);
+      const [fy,fm]=c.mes_fim.split('-').map(Number);
+      const meses = (fy-iy)*12 + (fm-im) + 1;
+      return meses > 1; // tem que ter pelo menos 2 meses pra ser parcelamento
+    }
+    return false;
+  });
   let htmlParc='';
   parc.forEach(c=>{
     const[fy,fm]=c.mes_fim.split('-').map(Number);
-    const mesF=new Date(fy,fm-1);
-    const mesI=new Date(mesF.getFullYear(),mesF.getMonth()-c.parcela_total+1);
+    // Calcula parcela_total: usa o campo se existir, senão calcula pelo intervalo
+    let totalParc = c.parcela_total;
+    let mesI;
+    if(c.mes_inicio){
+      const [iy,im]=c.mes_inicio.split('-').map(Number);
+      mesI = new Date(iy, im-1);
+      if(!totalParc){
+        totalParc = (fy-iy)*12 + (fm-im) + 1;
+      }
+    } else {
+      const mesF=new Date(fy,fm-1);
+      mesI=new Date(mesF.getFullYear(),mesF.getMonth()-totalParc+1);
+    }
     const mesAtualDate=new Date(hoje.getFullYear(),hoje.getMonth());
-    const pagas=Math.min(c.parcela_total,Math.round((mesAtualDate-mesI)/(1000*60*60*24*30))+1);
-    const restam=c.parcela_total-pagas;
-    const pct=Math.round((pagas/c.parcela_total)*100);
+    // Pagas: meses decorridos desde mes_inicio (clampado entre 0 e totalParc)
+    let pagas = Math.round((mesAtualDate-mesI)/(1000*60*60*24*30))+1;
+    pagas = Math.max(0, Math.min(totalParc, pagas));
+    const restam=totalParc-pagas;
+    const pct=Math.round((pagas/totalParc)*100);
     htmlParc+=`<div class="rel-card">
       <div class="rel-nome">${c.nome} <span style="font-size:11px;color:var(--text3)">${c.beneficiario}</span></div>
       <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text3);margin-bottom:4px">
-        <span>${pagas}/${c.parcela_total} parcelas · ${fmtV(c.valor)}/mês</span>
+        <span>${pagas}/${totalParc} parcelas · ${fmtV(c.valor)}/mês</span>
         <span style="color:${restam<=2?'var(--green)':'var(--amber)'}">${restam} restam</span>
       </div>
       <div class="parc-bar"><div class="parc-fill" style="width:${pct}%"></div></div>
@@ -1940,8 +1965,8 @@ NUNCA use "Custo Variável", "Custo Fixo", "Imposto", "Receita" como categoria �
 mes_inicio é o primeiro mês em que a conta aparece (formato "YYYY-MM"). Se não informado pelo usuário, use o mês atual.
 mes_fim é o último mês em que a conta aparece (opcional, deixe null se for indefinida).
 Se a conta é pontual (ex: "lançar só em abril"), use mes_inicio E mes_fim com o mesmo mês.
-Se é parcelada (ex: "parcelar em 2x abril e maio"), use mes_inicio do primeiro mês e mes_fim do último.
-{"a":"add_recorrente","desc":"nome","beneficiario":"credor","valor":0.00,"conta":"empresa|pessoal","dia":5,"mes_inicio":"YYYY-MM","mes_fim":"YYYY-MM ou null","msg":"confirmação"}
+Se é parcelada (ex: "parcelar em 5x começando em junho"), use mes_inicio do primeiro mês, mes_fim do último mês, e parcela_total com o número de parcelas (ex: 5). Sem parcela_total a conta não aparece na aba Relatório como parcelamento.
+{"a":"add_recorrente","desc":"nome","beneficiario":"credor","valor":0.00,"conta":"empresa|pessoal","dia":5,"mes_inicio":"YYYY-MM","mes_fim":"YYYY-MM ou null","parcela_total":null,"msg":"confirmação"}
 
 3. EDITAR CONTA EXISTENTE (mudar valor, dia, beneficiário, mes_inicio, mes_fim):
 {"a":"edit_conta","id":0,"campo":"valor|dia_vencimento|beneficiario|nome|mes_inicio|mes_fim","valor_novo":"novo valor","msg":"confirmação"}
@@ -2099,6 +2124,14 @@ function normalizarMesIA(m){
     toast('Gasto registrado!');
 
   } else if(parsed.a==='add_recorrente'){
+    // Calcula parcela_total automaticamente se tem mes_inicio e mes_fim diferentes (e a IA não passou)
+    let parcelaTotal = parsed.parcela_total || null;
+    if(!parcelaTotal && parsed.mes_inicio && parsed.mes_fim && parsed.mes_inicio !== parsed.mes_fim){
+      const [iy,im]=parsed.mes_inicio.split('-').map(Number);
+      const [fy,fm]=parsed.mes_fim.split('-').map(Number);
+      const meses = (fy-iy)*12 + (fm-im) + 1;
+      if(meses > 1) parcelaTotal = meses;
+    }
     const novaConta = {
       nome: parsed.desc,
       beneficiario: parsed.beneficiario||parsed.desc,
@@ -2109,11 +2142,13 @@ function normalizarMesIA(m){
       categoria: 'outros',
       ativo: true,
       mes_inicio: parsed.mes_inicio || mesStr(mesAtual.y, mesAtual.m),
-      mes_fim: parsed.mes_fim || null
+      mes_fim: parsed.mes_fim || null,
+      parcela_total: parcelaTotal
     };
     await sbPost('contas_fixas', novaConta);
     await carregarContas(); await carregarStatusMes(mesStr(mesAtual.y,mesAtual.m)); renderDias(); renderTodasContas();
     let detalhes = `${fmtV(parsed.valor)}/mês · dia ${parsed.dia||5} · ${parsed.conta==='empresa'?'LLG':'Pessoal'}`;
+    if(parcelaTotal) detalhes += ` · ${parcelaTotal}x parcelas`;
     if(parsed.mes_inicio === parsed.mes_fim && parsed.mes_inicio) detalhes += ` · pontual em ${parsed.mes_inicio}`;
     else if(parsed.mes_inicio || parsed.mes_fim) detalhes += ` · ${parsed.mes_inicio||'?'} → ${parsed.mes_fim||'sem fim'}`;
     addMsg(`✅ <b>${parsed.desc}</b> adicionada!<br>${detalhes}`,'g');
