@@ -52,3 +52,9 @@ Object.assign(window, uiContas, uiRetirada, uiRelatorio, uiPainel, uiGraficos, c
   document.getElementById('mesLabel').textContent=mesLabel(mesAtual.y,mesAtual.m);
   document.getElementById('mesLabelRet').textContent=mesLabel(mesRet.y,mesRet.m);
 })();
+
+// --- PWA: registra o service worker (app-shell offline). Falha silenciosa se nao suportado. ---
+// O modulo ja executa apos o parse do DOM, entao registra direto (sem esperar 'load').
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('/sw.js').catch(()=>{});
+}
