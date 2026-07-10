@@ -1715,8 +1715,11 @@ async function carregarRelatorio(){
     pagas = Math.max(0, Math.min(totalParc, pagas));
     const restam=totalParc-pagas;
     const pct=Math.round((pagas/totalParc)*100);
-    htmlParc+=`<div class="rel-card">
-      <div class="rel-nome">${c.nome} <span style="font-size:11px;color:var(--text3)">${c.beneficiario}</span></div>
+    const quitado = restam === 0;
+    htmlParc+=`<div class="rel-card" data-quitado="${quitado}" style="${quitado?'opacity:.65':''}">
+      <div class="rel-nome">${c.nome} <span style="font-size:11px;color:var(--text3)">${c.beneficiario}</span>
+        ${quitado?`<span style="background:var(--green-l);color:var(--green);font-size:10px;font-weight:600;padding:2px 6px;border-radius:8px;margin-left:6px;letter-spacing:.04em">✓ QUITADO</span>`:''}
+      </div>
       <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text3);margin-bottom:4px">
         <span>${pagas}/${totalParc} parcelas · ${fmtV(c.valor)}/mês</span>
         <span style="color:${restam<=2?'var(--green)':'var(--amber)'}">${restam} restam</span>
@@ -1725,7 +1728,13 @@ async function carregarRelatorio(){
       <div style="font-size:11px;color:var(--text3);margin-top:4px">Término: ${MESES_PT[fm-1]}/${fy} · Total restante: ${fmtV(restam*c.valor)}</div>
     </div>`;
   });
-  document.getElementById('relParcelamentos').innerHTML=htmlParc||'<div class="empty">Nenhum parcelamento ativo.</div>';
+  // Ordena: quitados no final
+  const containerParc = document.getElementById('relParcelamentos');
+  containerParc.innerHTML = htmlParc || '<div class="empty">Nenhum parcelamento ativo.</div>';
+  // Reordena: quitados por último
+  const cards = Array.from(containerParc.querySelectorAll('.rel-card'));
+  cards.sort((a,b) => (a.dataset.quitado==='true'?1:0) - (b.dataset.quitado==='true'?1:0));
+  cards.forEach(c => containerParc.appendChild(c));
 
   // Carrega pagamentos pessoais e gastos para popular dropdown global
   const [pagamentos, gastosChatRaw] = await Promise.all([
