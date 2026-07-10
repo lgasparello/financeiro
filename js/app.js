@@ -1,0 +1,2081 @@
+const SB_URL='https://reymsbccsnjesqmqcqei.supabase.co';
+const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJleW1zYmNjc25qZXNxbXFjcWVpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY4NzI2MTMsImV4cCI6MjA5MjQ0ODYxM30.vQa61UqiUyKqYC8G7owMB6vyyjwnrbwqfhb9_A-lxiU';
+const SB_HDR={'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json'};
+
+async function sbGet(t,q=''){const r=await fetch(`${SB_URL}/rest/v1/${t}?${q}`,{headers:SB_HDR});const tx=await r.text();return tx?JSON.parse(tx):[];}
+async function sbPost(t,d,opts=''){const r=await fetch(`${SB_URL}/rest/v1/${t}`,{method:'POST',headers:{...SB_HDR,'Prefer':opts||'return=representation'},body:JSON.stringify(d)});const tx=await r.text();return tx?JSON.parse(tx):null;}
+async function sbPatch(t,q,d){const r=await fetch(`${SB_URL}/rest/v1/${t}?${q}`,{method:'PATCH',headers:{...SB_HDR,'Prefer':'return=representation'},body:JSON.stringify(d)});const tx=await r.text();return tx?JSON.parse(tx):null;}
+
+// UPSERT manual: PATCH primeiro, INSERT se nao existir. Para tabelas sem constraint UNIQUE.
+async function sbUpsert(table, matchQuery, dados){
+  const patch = await fetch(`${SB_URL}/rest/v1/${table}?${matchQuery}`,{
+    method:'PATCH',headers:{...SB_HDR,'Prefer':'return=representation'},
+    body:JSON.stringify(dados)
+  });
+  const tx = await patch.text();
+  const patchData = tx?JSON.parse(tx):[];
+  if(Array.isArray(patchData)&&patchData.length===0){
+    return await sbPost(table, dados);
+  }
+  return patchData;
+}
+
+async function sbDelete(table, matchQuery){
+  await fetch(`${SB_URL}/rest/v1/${table}?${matchQuery}`,{method:'DELETE',headers:SB_HDR});
+}
+async function salvarStatusMes(id, ms, dados){
+  // Tenta patch primeiro (atualizar existente)
+  const patch = await fetch(`${SB_URL}/rest/v1/pagamentos_mes?conta_id=eq.${id}&mes=eq.${ms}`,{
+    method:'PATCH',headers:{...SB_HDR,'Prefer':'return=representation'},
+    body:JSON.stringify(dados)
+  });
+  const patchData = await patch.json();
+  // Se não existia (array vazio), cria novo
+  if(Array.isArray(patchData)&&patchData.length===0){
+    await sbPost('pagamentos_mes',{conta_id:id,mes:ms,...dados});
+  }
+}
+
+const hoje=new Date();
+const DIA_HOJE=hoje.getDate();
+let mesAtual={y:hoje.getFullYear(),m:hoje.getMonth()};
+let mesRet={y:hoje.getFullYear(),m:hoje.getMonth()};
+let mesPainel={y:hoje.getFullYear(),m:hoje.getMonth()};
+
+const MESES_PT=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+function mesStr(y,m){return `${y}-${String(m+1).padStart(2,'0')}`;}
+function mesLabel(y,m){return `${MESES_PT[m]} ${y}`;}
+function diasNoMes(y,m){return new Date(y,m+1,0).getDate();}
+function fmtV(v){return 'R$'+Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});}
+function fmtVl(v){return Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});}
+function formaLabel(f){return f==='llg'?'Débito LLG':f==='crt'?'Cartão':'Débito pessoal';}
+function formaBadge(f){return f==='llg'?'pb-llg':f==='crt'?'pb-crt':'pb-pes';}
+function isHoje(y,m){return y===hoje.getFullYear()&&m===hoje.getMonth();}
+
+function toast(msg,dur=2500){
+  const t=document.getElementById('toast');
+  t.textContent=msg;t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'),dur);
+}
+
+// ESTADO
+let contas=[];
+let statusMes={};
+let filtro='all';
+let diaSel=null;
+let benefFiltro='';
+
+// Verifica se conta está ativa no mês especificado (considera mes_inicio e mes_fim)
+function contaAtivaNoMes(c, y, m){
+  const mesRef = new Date(y, m);
+  if(c.mes_inicio){
+    const [iy,im] = c.mes_inicio.split('-').map(Number);
+    if(mesRef < new Date(iy, im-1)) return false;
+  }
+  if(c.mes_fim){
+    const [fy,fm] = c.mes_fim.split('-').map(Number);
+    if(mesRef > new Date(fy, fm-1)) return false;
+  }
+  return true;
+}
+
+function contasFiltradas(){
+  return contas.filter(c=>{
+    if(filtro!=='all'&&c.tipo!==filtro)return false;
+    if(benefFiltro&&c.beneficiario!==benefFiltro)return false;
+    if(!contaAtivaNoMes(c, mesAtual.y, mesAtual.m)) return false;
+    return true;
+  });
+}
+
+function setBenefFiltro(benef, btn){
+  benefFiltro = benef;
+  document.querySelectorAll('#benefFiltros .fbtn').forEach(b=>b.className='fbtn');
+  btn.className='fbtn on-all';
+  renderDias();
+  renderTodasContas();
+}
+
+function atualizarBenefFiltros(){
+  const lista = contas.filter(c=>{
+    if(filtro!=='all'&&c.tipo!==filtro)return false;
+    if(!contaAtivaNoMes(c, mesAtual.y, mesAtual.m)) return false;
+    return true;
+  });
+  const beneficiarios=[...new Set(lista.map(c=>c.beneficiario))].sort();
+  const benefRow=document.getElementById('benefFiltroRow');
+  const benefDiv=document.getElementById('benefFiltros');
+  if(beneficiarios.length>1){
+    benefRow.style.display='block';
+    let html='<button class="fbtn on-all" onclick="setBenefFiltro(\'\',this)">Todos</button>';
+    beneficiarios.forEach(b=>{
+      const nome=b.split(' ')[0];
+      html+=`<button class="fbtn" onclick="setBenefFiltro('${b}',this)">${nome}</button>`;
+    });
+    benefDiv.innerHTML=html;
+  } else {
+    benefRow.style.display='none';
+  }
+}
+
+function setFiltro(f,btn){
+  filtro=f;
+  benefFiltro='';
+  document.querySelectorAll('.fbtn').forEach(b=>b.className='fbtn');
+  btn.className='fbtn '+(f==='all'?'on-all':f==='empresa'?'on-llg':'on-pes');
+  atualizarBenefFiltros();
+  renderDias();if(diaSel!==null)renderDiaInfo(diaSel);renderTodasContas();
+}
+async function carregarContas(){
+  const data=await sbGet('contas_fixas','select=*&ativo=eq.true&order=dia_vencimento');
+  if(Array.isArray(data)) contas=data;
+}
+
+// CARREGAR STATUS DO MES
+async function carregarStatusMes(ms){
+  statusMes={};
+  const data=await sbGet('pagamentos_mes',`select=*&mes=eq.${ms}`);
+  if(Array.isArray(data)){
+    data.forEach(r=>{
+      statusMes[r.conta_id]={
+        pago:r.pago, valorPago:r.valor_pago, forma:r.forma,
+        data:r.data_pagamento, id:r.id, selecionado:false
+      };
+    });
+  }
+  contas.forEach(c=>{
+    if(!statusMes[c.id]){
+      statusMes[c.id]={pago:false,valorPago:c.valor,forma:c.forma_padrao,data:null,id:null,selecionado:false};
+    }
+  });
+}
+
+function mudarMes(d){
+  mesAtual.m+=d;
+  if(mesAtual.m>11){mesAtual.m=0;mesAtual.y++;}
+  if(mesAtual.m<0){mesAtual.m=11;mesAtual.y--;}
+  dadosFinanceiros={};
+  diaSel=null;
+  atualizarContas();
+}
+
+function irParaHoje(){
+  mesAtual={y:hoje.getFullYear(),m:hoje.getMonth()};
+  diaSel=null;
+  atualizarContas();
+}
+
+async function atualizarContas(){
+  document.getElementById('mesLabel').textContent=mesLabel(mesAtual.y,mesAtual.m);
+  document.getElementById('todasContas').innerHTML='<div class="loading">Carregando...</div>';
+  await carregarStatusMes(mesStr(mesAtual.y,mesAtual.m));
+  await carregarAgendamentos(mesStr(mesAtual.y,mesAtual.m));
+  atualizarBenefFiltros();
+  renderDias();
+  document.getElementById('diaInfo').innerHTML='<div style="font-size:12px;color:var(--text3)">Toque num dia para ver as contas</div>';
+  renderTodasContas();
+}
+
+// DIAS
+function diasComContas(){
+  const dias={};
+  contasFiltradas().forEach(c=>{if(!dias[c.dia_vencimento])dias[c.dia_vencimento]=[];dias[c.dia_vencimento].push(c);});
+  return dias;
+}
+
+function renderDias(){
+  const dcc=diasComContas();
+  const total=diasNoMes(mesAtual.y,mesAtual.m);
+  let html='';
+  for(let d=1;d<=total;d++){
+    const tc=!!dcc[d];
+    const tp=tc&&dcc[d].every(c=>statusMes[c.id]?.pago);
+    const ehHoje=isHoje(mesAtual.y,mesAtual.m)&&d===DIA_HOJE;
+    let cls='dia-btn';
+    if(!tc)cls+=' sem-conta';
+    if(ehHoje)cls+=' hoje';
+    if(d===diaSel)cls+=' sel';
+    if(tc&&!tp)cls+=' tem-conta';
+    if(tc&&tp)cls+=' tudo-pago';
+    html+=`<button class="${cls}" ${tc?`onclick="selDia(${d})"`:''}>${d}</button>`;
+  }
+  document.getElementById('diasWrap').innerHTML=html;
+}
+
+function selDia(d){
+  if(diaSel===d){diaSel=null;renderDias();document.getElementById('diaInfo').innerHTML='<div style="font-size:12px;color:var(--text3)">Toque num dia para ver as contas</div>';return;}
+  diaSel=d;renderDias();renderDiaInfo(d);
+}
+
+function renderDiaInfo(d){
+  const dcc=diasComContas();
+  const el=document.getElementById('diaInfo');
+  if(!dcc[d]){el.innerHTML=`<div style="font-size:12px;color:var(--text3)">Nenhuma conta no dia ${d}</div>`;return;}
+  let html=`<div style="display:flex;justify-content:space-between;margin-bottom:8px">
+    <span style="font-size:12px;font-weight:600;color:var(--text2)">Contas do dia ${d}</span>
+    <button onclick="selDia(${d})" style="font-size:11px;color:var(--text3);background:none;border:none;cursor:pointer">fechar</button></div>`;
+  dcc[d].forEach(c=>{
+    const e=statusMes[c.id];
+    const pg=e?.pago;
+    html+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border);font-size:13px">
+      <span>${c.nome}<span class="bdt ${c.tipo==='empresa'?'bd-l':'bd-p'}">${c.tipo==='empresa'?'LLG':'Pes.'}</span></span>
+      ${pg?`<span style="font-size:11px;color:var(--green);font-weight:600">Pago ${fmtV(e.valorPago)}</span>`:`<span style="font-size:11px;color:var(--red)">Pendente</span>`}
+    </div>`;
+  });
+  el.innerHTML=html;
+}
+
+function setForma(id,f){
+  if(!statusMes[id])return;
+  statusMes[id].forma=f;
+  renderTodasContas();
+}
+
+function renderTodasContas(){
+  let lista=contasFiltradas();
+  if(diaSel!==null) lista=lista.filter(c=>c.dia_vencimento===diaSel);
+  const pend=lista.filter(c=>!statusMes[c.id]?.pago).sort((a,b)=>a.dia_vencimento-b.dia_vencimento);
+  const pagos=lista.filter(c=>statusMes[c.id]?.pago).sort((a,b)=>a.dia_vencimento-b.dia_vencimento);
+  const totalPend=pend.reduce((s,c)=>s+(statusMes[c.id]?.valorPago||c.valor),0);
+  let html='<div class="contas-grid">';
+  // Coluna 1: Pendentes
+  html+='<div class="col-pend">';
+  if(pend.length){
+    html+=`<div class="sec-hd pend"><span>Pendentes — ${pend.length}</span><span>${fmtV(totalPend)}</span></div>`;
+    pend.forEach(c=>{html+=renderConta(c);});
+  }else{
+    html+=`<div class="sec-hd pago-hd"><span>Todas pagas!</span><span>0 pendentes</span></div>`;
+  }
+  html+='</div>';
+  // Coluna 2: Pagas
+  html+='<div class="col-pagos">';
+  if(pagos.length){
+    html+=`<div class="sec-hd pago-hd" style="margin-top:0"><span>Pagas — ${pagos.length}</span></div>`;
+    pagos.forEach(c=>{html+=renderConta(c);});
+  }
+  html+='</div>';
+  html+='</div>';
+  document.getElementById('todasContas').innerHTML=(pend.length||pagos.length)?html:'<div class="empty">Nenhuma conta neste filtro.</div>';
+  renderTotalBar();
+}
+
+function renderConta(c){
+  const e=statusMes[c.id]||{pago:false,valorPago:c.valor,forma:c.forma_padrao,selecionado:false};
+  const ms=mesStr(mesAtual.y,mesAtual.m);
+  const dp=c.dia_vencimento-DIA_HOJE;
+  const ehMesAtual=isHoje(mesAtual.y,mesAtual.m);
+  let vcls,vlbl;
+  if(e.pago){vcls='v-pg';vlbl='Pago';}
+  else if(!ehMesAtual){vcls='v-ok';vlbl='dia '+c.dia_vencimento;}
+  else if(c.dia_vencimento===DIA_HOJE){vcls='v-hj';vlbl='Hoje';}
+  else if(dp>0&&dp<=3){vcls='v-br';vlbl=dp+'d';}
+  else if(dp>0){vcls='v-ok';vlbl='dia '+c.dia_vencimento;}
+  else{vcls='v-ps';vlbl='Passou';}
+  const bd=c.tipo==='empresa'?'<span class="bdt bd-l">LLG</span>':'<span class="bdt bd-p">Pes.</span>';
+  let parcBadge='';
+  if(c.parcela_total&&c.mes_fim){
+    const [fy,fm]=c.mes_fim.split('-').map(Number);
+    const mesF=new Date(fy,fm-1);
+    const mesC=new Date(mesAtual.y,mesAtual.m);
+    const restam=Math.round((mesF-mesC)/(1000*60*60*24*30))+1;
+    if(restam>0) parcBadge=`<span class="bdt bd-parc">${restam}x restam</span>`;
+  }
+  const chk='ci-check'+(e.selecionado?' on':'');
+  const fbs=['llg','pes','crt'].map(f=>`<button class="forma-btn${e.forma===f?' on-'+f:''}" onclick="setForma(${c.id},'${f}')">${f==='llg'?'LLG':f==='crt'?'Cartão':'Pessoal'}</button>`).join('');
+  const agend = agendamentos[c.id];
+  const isAgendado = !!agend;
+  // Se tem agendamento e conta não está paga, usa o valor do agendamento
+  const valorExibido = (!e.pago && isAgendado) ? agend.valor : e.valorPago;
+  return `<div class="ci${e.pago?' pago':''}${e.selecionado?' sel-ci':''}${isAgendado?' agendado':''}" id="ci-${c.id}">
+    <div class="ci-top">
+      <div style="display:flex;gap:8px;align-items:flex-start">
+        ${!e.pago?`<div class="${chk}" onclick="toggleSel(${c.id})"><svg viewBox="0 0 10 10" fill="none" stroke="#fff" stroke-width="2"><polyline points="1.5,5 4,7.5 8.5,2.5"/></svg></div>`:''}
+        <div>
+          <div class="ci-nm">${c.nome}${bd}${parcBadge}${isAgendado?`<span class="bdt" style="background:var(--purple-l);color:var(--purple)">📅 ${agend.data_programada}</span>`:''}</div>
+          <div class="ci-dt">${c.beneficiario} · dia ${c.dia_vencimento}</div>
+        </div>
+      </div>
+      <div class="ci-right">
+        <div class="ci-vl${e.pago?' ptxt':''}">${fmtV(valorExibido)}</div>
+        <span class="vc ${vcls}">${vlbl}</span>
+        ${!e.pago?(isAgendado
+          ?`<button id="quickBtn-${c.id}" onclick="pagarRapido(${c.id})" title="Confirmar pagamento" style="display:block;margin-top:4px;background:var(--blue);border:1px solid var(--blue);border-radius:var(--rs);padding:3px 8px;font-size:10px;color:#fff;cursor:pointer;font-family:inherit;font-weight:600">✅ Confirmar</button>`
+          :`<button id="quickBtn-${c.id}" onclick="pagarRapido(${c.id})" title="Pagar com forma padrão" style="display:block;margin-top:4px;background:var(--green-l);border:1px solid var(--green-m);border-radius:var(--rs);padding:3px 8px;font-size:10px;color:var(--green);cursor:pointer;font-family:inherit;font-weight:600">⚡ Pagar</button>`
+        ):''}
+      </div>
+    </div>
+    ${!e.pago
+      ?(isAgendado
+        ?`<div class="ci-actions" style="margin-top:8px">
+            <button onclick="programarConta(${c.id})" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--rs);color:var(--text2);font-size:12px;cursor:pointer;font-family:inherit">✏️ Editar agendamento ou desfazer</button>
+          </div>`
+        :`<div class="ci-actions" style="margin-top:8px">
+            <button onclick="toggleEditConta(${c.id})" id="editBtn-${c.id}" style="width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--rs);color:var(--text2);font-size:12px;cursor:pointer;font-family:inherit">✏️ Editar antes de pagar ou programar</button>
+            <div id="editArea-${c.id}" style="display:none;margin-top:8px">
+              <div class="ci-row"><label>Valor</label><input type="number" id="val-${c.id}" value="${Number(valorExibido).toFixed(2)}" step="0.01"></div>
+              <div class="ci-row" style="margin-top:6px"><label>Via</label><div class="forma-btns">${fbs}</div></div>
+              <div style="display:flex;gap:6px;margin-top:8px">
+                <button class="btn-ok" onclick="pagarConta(${c.id})" style="flex:1">Confirmar pagamento</button>
+                <button onclick="programarConta(${c.id})" style="flex:0;padding:9px 12px;background:var(--purple-l);border:1px solid var(--purple-m);border-radius:var(--rs);color:var(--purple);font-size:12px;cursor:pointer;font-family:inherit;white-space:nowrap">📅 Programar</button>
+              </div>
+            </div>
+          </div>`)
+      :`<div class="pago-info">
+          <span class="pago-badge ${formaBadge(e.forma)}">${formaLabel(e.forma)}</span>
+          ${e.data?`<span style="font-size:11px;color:var(--text3)">${e.data}</span>`:''}
+          <button class="btn-desfaz" onclick="desfazerPagamento(${c.id})">Desfazer</button>
+        </div>`}
+  </div>`;
+}
+
+function toggleEditConta(id){
+  const area = document.getElementById('editArea-'+id);
+  const btn = document.getElementById('editBtn-'+id);
+  const quickBtn = document.getElementById('quickBtn-'+id);
+  if(!area || !btn) return;
+  if(area.style.display === 'none'){
+    area.style.display = 'block';
+    btn.style.display = 'none';
+    if(quickBtn) quickBtn.style.display = 'none';
+  } else {
+    area.style.display = 'none';
+    btn.style.display = 'block';
+    if(quickBtn) quickBtn.style.display = 'block';
+  }
+}
+
+let agendamentos = {};
+
+async function carregarAgendamentos(ms){
+  agendamentos = {};
+  const data = await sbGet('agendamentos', `select=*&mes=eq.${ms}`);
+  if(Array.isArray(data)) data.forEach(a => { agendamentos[a.conta_id] = a; });
+}
+
+async function programarConta(id){
+  const inp = document.getElementById('val-'+id);
+  const c = contas.find(x=>x.id===id);
+  const ms = mesStr(mesAtual.y, mesAtual.m);
+  const agendAtual = agendamentos[id];
+
+  // Valor padrão e data padrão
+  let v, dataDefault;
+  if(agendAtual){
+    // Já agendado: usa valores existentes
+    v = agendAtual.valor;
+    // converte dd/mm/yyyy → yyyy-mm-dd
+    const partes = (agendAtual.data_programada||'').split('/');
+    dataDefault = partes.length===3 ? `${partes[2]}-${partes[1]}-${partes[0]}` : '';
+  } else {
+    v = parseFloat(inp?.value || statusMes[id]?.valorPago) || statusMes[id]?.valorPago || c.valor;
+    const diaDefault = String(c.dia_vencimento).padStart(2,'0');
+    const mesStr2 = String(mesAtual.m+1).padStart(2,'0');
+    dataDefault = `${mesAtual.y}-${mesStr2}-${diaDefault}`;
+  }
+
+  const existing = document.getElementById('modalProgr');
+  if(existing) existing.remove();
+
+  const titulo = agendAtual ? `✏️ Editar agendamento — ${c.nome}` : `📅 Programar — ${c.nome}`;
+  const btnDesfazer = agendAtual
+    ? `<button onclick="desfazerAgendamento(${id})" style="padding:10px 14px;background:var(--red-l);border:1px solid var(--red-m);border-radius:var(--rs);color:var(--red);font-size:13px;cursor:pointer;font-family:inherit">🗑 Desfazer</button>`
+    : '';
+
+  const modal = document.createElement('div');
+  modal.id = 'modalProgr';
+  modal.style.cssText = `position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;background:var(--bg);border-top:1px solid var(--border);border-radius:16px 16px 0 0;padding:16px;z-index:200;box-shadow:0 -4px 24px rgba(0,0,0,.15)`;
+  modal.innerHTML = `
+    <div style="font-size:13px;font-weight:600;margin-bottom:12px">${titulo}</div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+      <label style="font-size:12px;color:var(--text3);white-space:nowrap">Valor:</label>
+      <input type="number" id="modalValProgr" value="${Number(v).toFixed(2)}" step="0.01" style="flex:1;padding:8px 10px;border-radius:var(--rs);border:1px solid var(--border2);background:var(--bg2);color:var(--text);font-size:13px;font-family:inherit">
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+      <label style="font-size:12px;color:var(--text3);white-space:nowrap">Data:</label>
+      <input type="date" id="inputDataProgr" value="${dataDefault}" style="flex:1;padding:8px 10px;border-radius:var(--rs);border:1px solid var(--border2);background:var(--bg2);color:var(--text);font-size:13px;font-family:inherit">
+    </div>
+    <div style="display:flex;gap:6px">
+      <button onclick="confirmarProgramar(${id})" style="flex:1;padding:10px;background:var(--purple-l);border:1px solid var(--purple-m);border-radius:var(--rs);color:var(--purple);font-size:13px;font-weight:500;cursor:pointer;font-family:inherit">${agendAtual?'Salvar alterações':'Confirmar'}</button>
+      ${btnDesfazer}
+      <button onclick="document.getElementById('modalProgr').remove()" style="padding:10px 14px;background:none;border:1px solid var(--border2);border-radius:var(--rs);color:var(--text3);font-size:13px;cursor:pointer;font-family:inherit">Cancelar</button>
+    </div>`;
+  document.querySelector('.app').appendChild(modal);
+  modal._contaId = id;
+  modal._valor = v;
+  modal._ms = ms;
+}
+
+async function desfazerAgendamento(id){
+  const c = contas.find(x=>x.id===id);
+  if(!confirm(`Desfazer agendamento de "${c?.nome||'conta'}"?`)) return;
+  const ms = mesStr(mesAtual.y, mesAtual.m);
+  await sbDelete('agendamentos', `conta_id=eq.${id}&mes=eq.${ms}`);
+  delete agendamentos[id];
+  document.getElementById('modalProgr')?.remove();
+  renderTodasContas();
+  toast('Agendamento removido');
+}
+
+async function confirmarProgramar(id){
+  const modal = document.getElementById('modalProgr');
+  if(!modal) return;
+  const dataISO = document.getElementById('inputDataProgr').value;
+  if(!dataISO) return;
+  const parts = dataISO.split('-');
+  const dataFmt = `${parts[2]}/${parts[1]}/${parts[0]}`;
+  const v = parseFloat(document.getElementById('modalValProgr')?.value) || modal._valor;
+  const ms = modal._ms;
+  const c = contas.find(x=>x.id===id);
+  await sbUpsert('agendamentos', `conta_id=eq.${id}&mes=eq.${ms}`, {conta_id:id,mes:ms,valor:v,forma:statusMes[id]?.forma||c.forma_padrao,data_programada:dataFmt});
+  agendamentos[id] = {conta_id:id,mes:ms,valor:v,forma:statusMes[id]?.forma,data_programada:dataFmt};
+  modal.remove();
+  renderTodasContas();
+  toast('Programado para '+dataFmt+'!');
+}
+
+async function programarSelecionados(){
+  const ms = mesStr(mesAtual.y, mesAtual.m);
+  for(const c of contas.filter(c=>statusMes[c.id]?.selecionado)){
+    const inp = document.getElementById('val-'+c.id);
+    const v = parseFloat(inp?.value || statusMes[c.id]?.valorPago) || c.valor;
+    const dataProgr = `${String(c.dia_vencimento).padStart(2,'0')}/${String(mesAtual.m+1).padStart(2,'0')}/${mesAtual.y}`;
+    await sbUpsert('agendamentos', `conta_id=eq.${c.id}&mes=eq.${ms}`, {conta_id:c.id,mes:ms,valor:v,forma:statusMes[c.id]?.forma||c.forma_padrao,data_programada:dataProgr});
+    agendamentos[c.id] = {conta_id:c.id,mes:ms,valor:v,forma:statusMes[c.id]?.forma,data_programada:dataProgr};
+    statusMes[c.id].selecionado = false;
+  }
+  renderTodasContas();
+  toast('Pagamentos programados!');
+}
+
+function limparSelecao(){
+  contas.forEach(c=>{if(statusMes[c.id])statusMes[c.id].selecionado=false;});
+  renderTodasContas();
+}
+
+function toggleSel(id){
+  if(statusMes[id]?.pago)return;
+  if(!statusMes[id])statusMes[id]={pago:false,valorPago:contas.find(c=>c.id===id)?.valor,forma:'pes',selecionado:false};
+  statusMes[id].selecionado=!statusMes[id].selecionado;
+  renderTodasContas();
+}
+
+async function pagarRapido(id){
+  const c = contas.find(x=>x.id===id);
+  if(!c) return;
+  // Usa o valor agendado se houver, senão valor padrão da conta
+  const agend = agendamentos[id];
+  const valor = agend ? agend.valor : c.valor;
+  const formaUsar = (agend && agend.forma) || statusMes[id]?.forma || c.forma_padrao;
+  const formaLbl = formaUsar==='llg'?'Débito LLG':formaUsar==='crt'?'Cartão':'Débito pessoal';
+  if(!confirm(`Pagar "${c.nome}"?\n\nValor: ${fmtV(valor)}\nForma: ${formaLbl}`)) return;
+  // Garante o status correto antes de pagar
+  if(!statusMes[id]) statusMes[id] = {pago:false, valorPago:valor, forma:formaUsar, selecionado:false};
+  statusMes[id].forma = formaUsar;
+  statusMes[id].valorPago = valor;
+  const ms = mesStr(mesAtual.y, mesAtual.m);
+  const dataStr = `${DIA_HOJE.toString().padStart(2,'0')}/${String(mesAtual.m+1).padStart(2,'0')}/${mesAtual.y}`;
+  statusMes[id] = {...statusMes[id], pago:true, valorPago:valor, data:dataStr, selecionado:false};
+  await salvarStatusMes(id, ms, {pago:true, valor_pago:valor, forma:formaUsar, data_pagamento:dataStr});
+  if(formaUsar !== 'crt'){
+    await abaterSaldo(c.tipo==='empresa'?'llg':'pessoal', valor);
+  }
+  renderTodasContas(); renderDias();
+  if(diaSel!==null) renderDiaInfo(diaSel);
+  toast('Pagamento confirmado!');
+}
+
+async function pagarConta(id){
+  const inp=document.getElementById('val-'+id);
+  const v=parseFloat(inp?inp.value:statusMes[id].valorPago)||statusMes[id].valorPago;
+  const c=contas.find(x=>x.id===id);
+  const ms=mesStr(mesAtual.y,mesAtual.m);
+  const dataStr=`${DIA_HOJE.toString().padStart(2,'0')}/${String(mesAtual.m+1).padStart(2,'0')}/${mesAtual.y}`;
+  statusMes[id]={...statusMes[id],pago:true,valorPago:v,data:dataStr,selecionado:false};
+  await salvarStatusMes(id, ms, {pago:true, valor_pago:v, forma:statusMes[id].forma, data_pagamento:dataStr});
+  // Só abate saldo se não for cartão
+  if(statusMes[id].forma !== 'crt'){
+    const contaSaldo = c.tipo==='empresa'?'llg':'pessoal';
+    await abaterSaldo(contaSaldo, v);
+  }
+  renderTodasContas();renderDias();if(diaSel!==null)renderDiaInfo(diaSel);
+  toast('Pagamento confirmado!');
+}
+
+async function pagarSelecionados(){
+  for(const c of contas.filter(c=>statusMes[c.id]?.selecionado)) await pagarConta(c.id);
+}
+
+async function desfazerPagamento(id){
+  const c=contas.find(x=>x.id===id);
+  if(!confirm(`Desfazer pagamento de "${c?.nome||'conta'}"?\n\nO valor voltará para o saldo.`)) return;
+  const ms=mesStr(mesAtual.y,mesAtual.m);
+  const v=statusMes[id]?.valorPago||0;
+  statusMes[id]={...statusMes[id],pago:false,selecionado:false};
+  await salvarStatusMes(id, ms, {pago:false, valor_pago:statusMes[id].valorPago, forma:statusMes[id].forma});
+  // Só repõe saldo se não foi cartão
+  if(statusMes[id].forma !== 'crt'){
+    const contaSaldo = c.tipo==='empresa'?'llg':'pessoal';
+    await reporSaldo(contaSaldo, v);
+  }
+  renderTodasContas();renderDias();if(diaSel!==null)renderDiaInfo(diaSel);
+  toast('Desfeito');
+}
+
+function renderTotalBar(){
+  const sels=contas.filter(c=>statusMes[c.id]?.selecionado);
+  const bar=document.getElementById('totalBar');
+  if(!sels.length){bar.style.display='none';return;}
+  bar.style.display='block';
+  const total=sels.reduce((s,c)=>{
+    const inp=document.getElementById('val-'+c.id);
+    return s+(parseFloat(inp?inp.value:statusMes[c.id]?.valorPago)||0);
+  },0);
+  document.getElementById('totalVal').textContent=fmtV(total);
+  const pp={};
+  sels.forEach(c=>{
+    const inp=document.getElementById('val-'+c.id);
+    const v=parseFloat(inp?inp.value:statusMes[c.id]?.valorPago)||0;
+    if(!pp[c.beneficiario])pp[c.beneficiario]=0;pp[c.beneficiario]+=v;
+  });
+  let pph='';
+  Object.entries(pp).forEach(([p,v])=>{
+    const nome=p.split(' ')[0];
+    pph+=`<div class="total-pessoa-pill">${nome}: <b>${fmtV(v)}</b></div>`;
+  });
+  document.getElementById('totalPorPessoa').innerHTML=pph;
+}
+
+// DADOS FINANCEIROS DINAMICOS
+let dadosFinanceiros = {}; // cache por mes
+
+async function calcularMes(ms){
+  if(dadosFinanceiros[ms]) return dadosFinanceiros[ms];
+  // Garantir que contas estão carregadas
+  if(!contas.length) await carregarContas();
+
+  // Componentes de retirada (precisamos pra projetar retiradas fixas não enviadas)
+  if(!componentesRet.length){
+    const compRaw = await sbGet('componentes_retirada','select=*&ativo=eq.true&order=id');
+    componentesRet = Array.isArray(compRaw) ? compRaw : [];
+  }
+
+  const [recsRaw, impsRaw, pagsTodosRaw, gastosRaw, retiradasRaw] = await Promise.all([
+    sbGet('receitas', `select=*&mes=eq.${ms}`),
+    sbGet('impostos', `select=*&mes=eq.${ms}`),
+    sbGet('pagamentos_mes', `select=*&mes=eq.${ms}`),
+    sbGet('gastos', `select=*&mes=eq.${ms}`),
+    sbGet('retiradas', `select=*&mes=eq.${ms}`)
+  ]);
+  const receitas = Array.isArray(recsRaw) ? recsRaw : [];
+  const impostos = Array.isArray(impsRaw) ? impsRaw : [];
+  const pagsTodos = Array.isArray(pagsTodosRaw) ? pagsTodosRaw : [];
+  const pagamentos = pagsTodos.filter(p=>p.pago);
+  const gastos = Array.isArray(gastosRaw) ? gastosRaw : [];
+  const retiradasAll = Array.isArray(retiradasRaw) ? retiradasRaw : [];
+  const retiradas = retiradasAll.filter(r=>r.enviado);
+
+  // === REAIS ===
+  // Receita real = só as recebidas (recebido=true ou campo ausente)
+  const receitasRecebidas = receitas.filter(r => r.recebido !== false);
+  const totalReceitaReal = receitasRecebidas.reduce((s,r)=>s+r.valor,0);
+  // Receita prevista (não recebida ainda)
+  const receitasPrevistas = receitas.filter(r => r.recebido === false);
+  const totalReceitaPrev = receitasPrevistas.reduce((s,r)=>s+r.valor,0);
+
+  const totalImpostos = impostos.reduce((s,i)=>s+i.valor,0);
+  const totalRetirado = retiradas.reduce((s,r)=>s+r.valor,0);
+
+  // CF empresa pago (operacional real)
+  const cfEmpresaReal = pagamentos
+    .filter(p=>{ const c=contas.find(x=>x.id===p.conta_id); return c&&c.tipo==='empresa'; })
+    .reduce((s,p)=>{ const c=contas.find(x=>x.id===p.conta_id); return s+(p.valor_pago||c?.valor||0); },0);
+
+  // CF retiradas fixas reais (PL+PS+Moto enviadas, exceto lucros)
+  const cfRetiradasReal = retiradas
+    .filter(r=>r.componente!=='lucros')
+    .reduce((s,r)=>s+r.valor,0);
+
+  // CV empresa real
+  const cvEmpresa = gastos
+    .filter(g=>g.conta==='empresa')
+    .reduce((s,g)=>s+g.valor,0);
+
+  // === PROJETADOS (faltam pagar) ===
+  // CF empresa ainda não pago: pega contas fixas empresa ativas no mês, exclui as já pagas
+  const idsJaPagos = new Set(pagamentos.map(p=>p.conta_id));
+  const [py, pm] = ms.split('-').map(Number);
+  const cfEmpresaPendente = contas
+    .filter(c=>c.tipo==='empresa' && contaAtivaNoMes(c, py, pm-1) && !idsJaPagos.has(c.id))
+    .reduce((s,c)=>s+(c.valor||0),0);
+
+  // Retiradas fixas ainda não enviadas (PL+PS+Moto)
+  const compEnviados = new Set(retiradas.map(r=>r.componente));
+  const cfRetiradasPendente = componentesRet
+    .filter(c=>c.chave!=='lucros' && !compEnviados.has(c.chave))
+    .filter(c=>{
+      // respeita mes_fim do componente (Moto tem fim em jun/26)
+      if(c.mes_fim){
+        const [fy,fm]=c.mes_fim.split('-').map(Number);
+        if(new Date(py,pm-1) > new Date(fy,fm-1)) return false;
+      }
+      return true;
+    })
+    .reduce((s,c)=>s+(c.valor||0),0);
+
+  // === TOTAIS ===
+  const cfReal = cfEmpresaReal + cfRetiradasReal;
+  const cfTotalProjetado = cfReal + cfEmpresaPendente + cfRetiradasPendente;
+  const receitaTotalProjetada = totalReceitaReal + totalReceitaPrev;
+
+  // Lucro real: só com o que efetivamente entrou e saiu
+  const lucroReal = totalReceitaReal - cfReal - cvEmpresa - totalImpostos;
+  // Lucro projetado: o que vai sobrar se tudo previsto se confirmar
+  const lucroProjetado = receitaTotalProjetada - cfTotalProjetado - cvEmpresa - totalImpostos;
+
+  console.log(`[${ms}] Receita R:${totalReceitaReal} P:${totalReceitaPrev} | CF R:${cfReal} Pend:${cfEmpresaPendente+cfRetiradasPendente} | CV:${cvEmpresa} | Imp:${totalImpostos} | Lucro R:${lucroReal} Proj:${lucroProjetado}`);
+
+  const result = {
+    receita: totalReceitaReal,
+    receitaPrevista: totalReceitaPrev,
+    receitaProjetada: receitaTotalProjetada,
+    impostos: totalImpostos,
+    cf: cfReal,
+    cfPendente: cfEmpresaPendente + cfRetiradasPendente,
+    cfProjetado: cfTotalProjetado,
+    cv: cvEmpresa,
+    lucro: lucroReal,
+    lucroProjetado: lucroProjetado,
+    retirado: totalRetirado,
+    receitaItens: receitas,
+    impostosItens: impostos
+  };
+  dadosFinanceiros[ms] = result;
+  return result;
+}
+
+async function carregarPainel(){
+  dadosFinanceiros = {}; // limpar cache para recalcular
+  const ms = mesStr(mesPainel.y, mesPainel.m);
+  const mAnterior = new Date(mesPainel.y, mesPainel.m-1);
+  const msAnt = mesStr(mAnterior.getFullYear(), mAnterior.getMonth());
+  // Atualizar label do navegador de mes
+  const lblPainel = document.getElementById('mesLabelPainel');
+  if(lblPainel) lblPainel.textContent = mesLabel(mesPainel.y, mesPainel.m);
+
+  const [dadosMes, dadosAnt] = await Promise.all([
+    calcularMes(ms),
+    calcularMes(msAnt)
+  ]);
+
+  // Acumulado do ano atual (jan até mês corrente — dinâmico)
+  const anoAtual = mesPainel.y;
+  let lucroAcum = 0;
+  for(let m=0; m<=mesPainel.m; m++){
+    const d = await calcularMes(mesStr(anoAtual, m));
+    lucroAcum += d.lucro;
+  }
+
+  // Custos pessoais do mês (já pagos)
+  const pagsPes = await sbGet('pagamentos_mes', `select=*&mes=eq.${ms}&pago=eq.true`);
+  const totalPes = Array.isArray(pagsPes)
+    ? pagsPes.filter(p=>{const c=contas.find(x=>x.id===p.conta_id);return c&&c.tipo==='pessoal';})
+             .reduce((s,p)=>{const c=contas.find(x=>x.id===p.conta_id);return s+(p.valor_pago||c?.valor||0);},0)
+    : 0;
+
+  // Custos pessoais agendados (ainda não pagos) — saídas pra projeção
+  const agendPes = await sbGet('agendamentos', `select=*&mes=eq.${ms}`);
+  const idsPagos = new Set(Array.isArray(pagsPes)?pagsPes.filter(p=>p.pago).map(p=>p.conta_id):[]);
+  const totalAgendPes = Array.isArray(agendPes)
+    ? agendPes.filter(a=>{const c=contas.find(x=>x.id===a.conta_id);return c&&c.tipo==='pessoal'&&!idsPagos.has(a.conta_id);})
+              .reduce((s,a)=>s+(a.valor||0),0)
+    : 0;
+
+  // Retiradas agendadas (forma=ret) — entradas no pessoal que ainda não foram enviadas
+  const retiradasJaEnviadas = await sbGet('retiradas', `select=componente&mes=eq.${ms}&enviado=eq.true`);
+  const compEnviados = new Set(Array.isArray(retiradasJaEnviadas) ? retiradasJaEnviadas.map(r=>r.componente) : []);
+  const totalRetAgendadas = Array.isArray(agendPes)
+    ? agendPes.filter(a=>a.forma==='ret' && a.componente && !compEnviados.has(a.componente))
+              .reduce((s,a)=>s+(a.valor||0),0)
+    : 0;
+
+  // Receita pessoal = retiradas do mês
+  const retiradasPes = await sbGet('retiradas', `select=*&mes=eq.${ms}&enviado=eq.true`);
+  const totalRetPes = Array.isArray(retiradasPes) ? retiradasPes.reduce((s,r)=>s+r.valor,0) : 0;
+
+  const labelMes = mesLabel(mesPainel.y, mesPainel.m);
+  // Limite usa projetado se mês anterior ainda tem CF pendente (não fechou),
+  // senão usa real. Mesma regra do getLucroAnterior.
+  const limiteRetirada = (dadosAnt.cfPendente > 0) ? dadosAnt.lucroProjetado : dadosAnt.lucro;
+
+  // Helper pra mostrar diff vs mês anterior
+  const diffStr = (atual, anterior) => {
+    if(!anterior && anterior !== 0) return '';
+    const diff = atual - anterior;
+    if(Math.abs(diff) < 0.01) return '<div class="mc-sub">igual ao mês anterior</div>';
+    const cor = diff > 0 ? 'var(--red)' : 'var(--green)';
+    const sinal = diff > 0 ? '+' : '';
+    return `<div class="mc-sub" style="color:${cor}">${sinal}${fmtV(diff)} vs ${MESES_PT[mAnterior.getMonth()].slice(0,3)}</div>`;
+  };
+  // Diff onde aumentar é bom (receita, lucro, retirado)
+  const diffStrPositivo = (atual, anterior) => {
+    if(!anterior && anterior !== 0) return '';
+    const diff = atual - anterior;
+    if(Math.abs(diff) < 0.01) return '<div class="mc-sub">igual ao mês anterior</div>';
+    const cor = diff > 0 ? 'var(--green)' : 'var(--red)';
+    const sinal = diff > 0 ? '+' : '';
+    return `<div class="mc-sub" style="color:${cor}">${sinal}${fmtV(diff)} vs ${MESES_PT[mAnterior.getMonth()].slice(0,3)}</div>`;
+  };
+
+  // Projeção: saldo após receber retiradas agendadas e pagar tudo agendado pessoal
+  const saldoProjetado = saldos.pessoal + totalRetAgendadas - totalAgendPes;
+  const temAgendamentos = totalAgendPes > 0 || totalRetAgendadas > 0;
+
+  document.getElementById('painelMesEmpresa').innerHTML=`
+    <div class="sh">${labelMes} — empresa</div>
+    <div class="grid2">
+      <div class="mc"><div class="mc-lbl">Receita ${dadosMes.receitaPrevista>0?'(recebida)':''}</div><div class="mc-val" style="color:var(--blue)">${fmtV(dadosMes.receita)}</div>${dadosMes.receitaPrevista>0?`<div class="mc-sub" style="color:var(--blue)">+ ${fmtV(dadosMes.receitaPrevista)} prevista</div>`:diffStrPositivo(dadosMes.receita, dadosAnt.receita)}</div>
+      <div class="mc"><div class="mc-lbl">Lucro líquido (real)</div><div class="mc-val" style="color:${dadosMes.lucro>=0?'var(--green)':'var(--red)'}">${fmtV(dadosMes.lucro)}</div>${diffStrPositivo(dadosMes.lucro, dadosAnt.lucro)}</div>
+      <div class="mc" style="background:var(--purple-l);border-color:var(--purple-m)">
+        <div class="mc-lbl" style="color:var(--purple)">📊 Lucro projetado</div>
+        <div class="mc-val" style="color:var(--purple)">${fmtV(dadosMes.lucroProjetado)}</div>
+        <div class="mc-sub" style="color:var(--purple)">Se tudo previsto for pago</div>
+      </div>
+      <div class="mc"><div class="mc-lbl">Custo fixo ${dadosMes.cfPendente>0?'(pago)':''}</div><div class="mc-val" style="color:var(--amber)">${fmtV(dadosMes.cf)}</div>${dadosMes.cfPendente>0?`<div class="mc-sub" style="color:var(--amber)">+ ${fmtV(dadosMes.cfPendente)} pendente</div>`:diffStr(dadosMes.cf, dadosAnt.cf)}</div>
+      <div class="mc"><div class="mc-lbl">Custo variável</div><div class="mc-val" style="color:var(--amber)">${fmtV(dadosMes.cv)}</div>${diffStr(dadosMes.cv, dadosAnt.cv)}</div>
+      <div class="mc"><div class="mc-lbl">Impostos</div><div class="mc-val" style="color:var(--red)">${fmtV(dadosMes.impostos)}</div>${diffStr(dadosMes.impostos, dadosAnt.impostos)}</div>
+      <div class="mc"><div class="mc-lbl">Total retirado</div><div class="mc-val" style="color:var(--purple)">${fmtV(dadosMes.retirado)}</div></div>
+      <div class="mc full" style="background:var(--${limiteRetirada>0?'amber':'red'}-l);border-color:var(--${limiteRetirada>0?'amber':'red'}-m)">
+        <div class="mc-lbl" style="color:var(--${limiteRetirada>0?'amber':'red'})">Limite retirada lucros (mês anterior)</div>
+        <div class="mc-val" style="color:var(--${limiteRetirada>0?'amber':'red'})">${fmtV(limiteRetirada)}</div>
+      </div>
+    </div>`;
+
+  document.getElementById('painelMesPessoal').innerHTML=`
+    <div class="sh">${labelMes} — pessoal</div>
+    <div class="grid2">
+      <div class="mc"><div class="mc-lbl">Receita (retiradas)</div><div class="mc-val" style="color:var(--blue)">${fmtV(totalRetPes)}</div></div>
+      <div class="mc"><div class="mc-lbl">Custos pagos</div><div class="mc-val" style="color:var(--amber)">${fmtV(totalPes)}</div></div>
+      <div class="mc full"><div class="mc-lbl">Saldo estimado</div><div class="mc-val" style="color:${totalRetPes-totalPes>=0?'var(--green)':'var(--red)'}">${fmtV(totalRetPes-totalPes)}</div><div class="mc-sub">Receitas − custos pagos no mês</div></div>
+      ${temAgendamentos ? `
+      <div class="mc full" style="background:var(--${saldoProjetado>=0?'blue':'red'}-l);border-color:var(--${saldoProjetado>=0?'blue':'red'}-m)">
+        <div class="mc-lbl" style="color:var(--${saldoProjetado>=0?'blue':'red'})">📅 Saldo projetado pessoal</div>
+        <div class="mc-val" style="color:var(--${saldoProjetado>=0?'blue':'red'})">${fmtV(saldoProjetado)}</div>
+        <div class="mc-sub" style="color:var(--${saldoProjetado>=0?'blue':'red'})">
+          ${fmtV(saldos.pessoal)} atual${totalRetAgendadas>0?` + ${fmtV(totalRetAgendadas)} entrada`:''}${totalAgendPes>0?` − ${fmtV(totalAgendPes)} saída`:''}
+        </div>
+      </div>` : ''}
+    </div>`;
+
+  document.getElementById('painelAcumulado').innerHTML=`
+    <div class="sh">Acumulado ${anoAtual}</div>
+    <div class="grid2">
+      <div class="mc"><div class="mc-lbl">Lucro empresa (jan–${MESES_PT[mesPainel.m].slice(0,3).toLowerCase()})</div><div class="mc-val" style="color:${lucroAcum>=0?'var(--green)':'var(--red)'}">${fmtV(lucroAcum)}</div></div>
+      <div class="mc"><div class="mc-lbl">Saldo pessoal atual</div><div class="mc-val" style="color:${saldos.pessoal>=0?'var(--blue)':'var(--red)'}">${fmtV(saldos.pessoal)}</div></div>
+    </div>`;
+}
+
+// LUCRO DO MES ANTERIOR (dinamico para retirada)
+async function getLucroAnterior(y, m){
+  const mAnterior = new Date(y, m-1);
+  const ms = mesStr(mAnterior.getFullYear(), mAnterior.getMonth());
+  const dados = await calcularMes(ms);
+  // Se o mês ainda tem CF pendente (não fechou), usa projetado.
+  // Se está tudo pago, usa real.
+  if(dados.cfPendente > 0) return dados.lucroProjetado;
+  return dados.lucro;
+}
+let componentesRet = [];
+let retiradaMes={};
+let agendRetMes = {};
+
+function mudarMesRet(d){
+  mesRet.m+=d;
+  if(mesRet.m>11){mesRet.m=0;mesRet.y++;}
+  if(mesRet.m<0){mesRet.m=11;mesRet.y--;}
+  atualizarRetirada();
+}
+function irParaHojeRet(){mesRet={y:hoje.getFullYear(),m:hoje.getMonth()};atualizarRetirada();}
+
+function mudarMesPainel(d){
+  mesPainel.m+=d;
+  if(mesPainel.m>11){mesPainel.m=0;mesPainel.y++;}
+  if(mesPainel.m<0){mesPainel.m=11;mesPainel.y--;}
+  carregarPainel();
+}
+function irParaHojePainel(){mesPainel={y:hoje.getFullYear(),m:hoje.getMonth()};carregarPainel();}
+
+async function atualizarRetirada(){
+  document.getElementById('mesLabelRet').textContent=mesLabel(mesRet.y,mesRet.m);
+  document.getElementById('retContent').innerHTML='<div class="loading">Carregando...</div>';
+  const ms=mesStr(mesRet.y,mesRet.m);
+  const compRaw = await sbGet('componentes_retirada','select=*&ativo=eq.true&order=id');
+  componentesRet = Array.isArray(compRaw) ? compRaw : [];
+  if(!componentesRet.find(c=>c.chave==='lucros')){
+    componentesRet.push({id:99,nome:'Lucros',chave:'lucros',valor:0,ativo:true,mes_fim:null});
+  }
+  const [retData, pagsRetRaw, agendRetRaw] = await Promise.all([
+    sbGet('retiradas',`select=*&mes=eq.${ms}`),
+    sbGet('pagamentos_mes',`select=*&mes=eq.${ms}&pago=eq.true`),
+    sbGet('agendamentos',`select=*&mes=eq.${ms}&forma=eq.ret`)
+  ]);
+  retiradaMes={};
+  if(Array.isArray(retData)){
+    retData.forEach(r=>{retiradaMes[r.componente]={valor:r.valor,enviado:r.enviado,data:r.data_envio,id:r.id};});
+  }
+  agendRetMes={};
+  if(Array.isArray(agendRetRaw)){
+    agendRetRaw.forEach(a=>{
+      if(a.componente) agendRetMes[a.componente]={valor:a.valor,data:a.data_programada};
+    });
+  }
+  const statusMesRet={};
+  if(Array.isArray(pagsRetRaw)) pagsRetRaw.forEach(r=>{statusMesRet[r.conta_id]={pago:r.pago,valorPago:r.valor_pago};});
+  const agendMesRet={};
+  const agendContasRaw = await sbGet('agendamentos',`select=*&mes=eq.${ms}&forma=neq.ret`);
+  if(Array.isArray(agendContasRaw)) agendContasRaw.forEach(a=>{if(a.conta_id) agendMesRet[a.conta_id]={valor:a.valor};});
+  const lucroAntRaw = await getLucroAnterior(mesRet.y, mesRet.m);
+  const lucroAnt = Math.max(0, lucroAntRaw);
+  renderRetirada(lucroAnt, lucroAntRaw, statusMesRet, agendMesRet);
+}
+
+function renderRetirada(lucroAnt=0, lucroAntRaw=0, statusMesRet={}, agendMesRet={}){
+  const ms=mesStr(mesRet.y,mesRet.m);
+  const mAnterior=new Date(mesRet.y,mesRet.m-1);
+
+  // Separar fixos de lucros
+  const fixosEnviados=Object.entries(retiradaMes)
+    .filter(([k,r])=>r.enviado&&k!=='lucros')
+    .reduce((s,[,r])=>s+r.valor,0);
+  const lucrosEnv=retiradaMes['lucros']?.enviado?retiradaMes['lucros'].valor:0;
+  const totalEnv=fixosEnviados+lucrosEnv;
+  const lucrosPrev=retiradaMes['lucros']?.valor||0;
+  const excessoLucros=lucrosPrev>lucroAnt&&lucroAnt>=0;
+
+  // Calcular mínimo pessoal usando real > programado > previsto
+  const contasPessoais = contas.filter(c=>{
+    if(c.tipo!=='pessoal') return false;
+    if(!contaAtivaNoMes(c, mesRet.y, mesRet.m)) return false;
+    return true;
+  });
+  const minimoRetirar = contasPessoais.reduce((s,c)=>{
+    const st = statusMesRet[c.id];
+    if(st?.pago) return s + (st.valorPago||c.valor);
+    const agend = agendMesRet[c.id];
+    if(agend) return s + (agend.valor||c.valor);
+    return s + c.valor;
+  },0);
+
+  let html='';
+
+  // Aviso se mês anterior foi negativo
+  if(lucroAntRaw<0){
+    html+=`<div style="background:var(--red-l);border:1px solid var(--red-m);border-radius:var(--rs);padding:8px 12px;margin-bottom:10px;font-size:12px;color:var(--red)">
+      ⚠ ${MESES_PT[mAnterior.getMonth()]} teve prejuízo de ${fmtV(Math.abs(lucroAntRaw))}. Limite de lucros = R$0,00.
+    </div>`;
+  }
+
+  // Card mínimo a retirar (largura cheia)
+  const diffMinimo = totalEnv - minimoRetirar;
+  html+=`<div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:var(--r);padding:11px 13px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
+    <div>
+      <div style="font-size:11px;font-weight:600;color:var(--blue);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px">💡 Mínimo para cobrir contas pessoais</div>
+      <div style="font-size:20px;font-weight:700;color:var(--blue)">${fmtV(minimoRetirar)}</div>
+    </div>
+    ${totalEnv>0?`<div style="font-size:12px;font-weight:500;color:var(--${diffMinimo>=0?'green':'red'});text-align:right">
+      ${diffMinimo>=0?'✅ OK':'⚠ Faltam<br>'+fmtV(Math.abs(diffMinimo))}
+    </div>`:''}
+  </div>`;
+
+  // Inicia grid 2 colunas (no PC) — coluna esquerda: resumo + composição
+  html+='<div class="ret-grid"><div>';
+
+  // Resumo em 3 cards
+  html+=`<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px">
+    <div class="ret-limite">
+      <div class="ret-limite-lbl">Limite lucros</div>
+      <div class="ret-limite-val" style="font-size:16px">${fmtV(lucroAnt)}</div>
+      <div class="ret-limite-sub">${MESES_PT[mAnterior.getMonth()]}</div>
+    </div>
+    <div style="background:var(--${excessoLucros?'red':'green'}-l);border:1px solid var(--${excessoLucros?'red':'green'}-m);border-radius:var(--r);padding:11px 13px">
+      <div style="font-size:11px;font-weight:600;color:var(--${excessoLucros?'red':'green'});text-transform:uppercase;letter-spacing:.04em">Lucros retirados</div>
+      <div style="font-size:16px;font-weight:600;color:var(--${excessoLucros?'red':'green'});margin-top:3px">${fmtV(lucrosEnv)}</div>
+      <div style="font-size:11px;color:var(--${excessoLucros?'red':'green'});margin-top:2px">${excessoLucros?'EXCESSO':'OK'}</div>
+    </div>
+    <div class="ret-total-bar">
+      <div class="ret-total-lbl">Total geral</div>
+      <div class="ret-total-val" style="font-size:16px">${fmtV(totalEnv)}</div>
+    </div>
+  </div>`;
+
+  // Composição detalhada
+  html+=`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:11px 13px;margin-bottom:12px">
+    <div style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">Composição</div>
+    ${componentesRet.map(c=>{
+      const env=retiradaMes[c.chave]?.enviado;
+      const agendRet=agendRetMes[c.chave];
+      const v=env?retiradaMes[c.chave].valor:agendRet?agendRet.valor:0;
+      const isLucros=c.chave==='lucros';
+      const cor=isLucros&&excessoLucros?'var(--red)':'var(--text)';
+      const suffix=!env&&agendRet?' 📅':env?'':' —';
+      return `<div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-bottom:1px solid var(--border)">
+        <span style="color:var(--text2)">${c.nome}</span>
+        <span style="font-weight:500;color:${cor}">${v>0?fmtV(v):'R$0,00'}${suffix}${isLucros&&excessoLucros?' ⚠':''}</span>
+      </div>`;
+    }).join('')}
+    <div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;font-weight:600">
+      <span>Total enviado</span><span>${fmtV(totalEnv)}</span>
+    </div>
+  </div>`;
+
+  // Fecha coluna esquerda, abre direita (cards de componentes)
+  html+='</div><div>';
+
+  // Cards por componente com checkbox
+  let retSelecionados = {};
+  componentesRet.forEach(c=>{
+    if(c.mes_fim){
+      const[fy,fm]=c.mes_fim.split('-').map(Number);
+      if(new Date(mesRet.y,mesRet.m)>new Date(fy,fm-1))return;
+    }
+    const r=retiradaMes[c.chave];
+    const agendRet=agendRetMes[c.chave];
+    const val=r?.valor||agendRet?.valor||c.valor||0;
+    const env=r?.enviado||false;
+    const isAgendRet=!!agendRet&&!env;
+    html+=`<div class="ret-card" id="retcard-${c.chave}">
+      <div class="ret-top">
+        <div style="display:flex;gap:8px;align-items:center">
+          ${!env?`<div class="ci-check" id="retsel-${c.chave}" onclick="toggleRetSel('${c.chave}')"><svg viewBox="0 0 10 10" fill="none" stroke="#fff" stroke-width="2"><polyline points="1.5,5 4,7.5 8.5,2.5"/></svg></div>`:''}
+          <div class="ret-nome">${c.nome}${isAgendRet?`<span class="bdt" style="background:var(--purple-l);color:var(--purple);margin-left:4px">📅 ${agendRet.data}</span>`:''}</div>
+        </div>
+        <span class="ret-status ${env?'ret-env':isAgendRet?'ret-pend':'ret-pend'}">${env?'Enviado':isAgendRet?'Agendado':'Pendente'}</span>
+      </div>
+      ${!env?`
+        <div class="ret-row" style="margin-top:8px">
+          <input type="number" id="ret-val-${c.chave}" value="${Number(val).toFixed(2)}" step="0.01" placeholder="Valor" onchange="atualizarTotalRet()">
+          <input type="date" id="ret-data-${c.chave}" value="${hoje.toISOString().split('T')[0]}">
+        </div>
+        <button class="btn-env" onclick="enviarRetirada('${c.chave}','${ms}')">Confirmar envio</button>
+        <button onclick="programarRetirada('${c.chave}','${ms}',${val})" style="margin-top:4px;width:100%;padding:7px;background:var(--purple-l);border:1px solid var(--purple-m);border-radius:var(--rs);color:var(--purple);font-size:12px;cursor:pointer;font-family:inherit">${isAgendRet?'✓ Agendado — clique para remover':'📅 Programar'}</button>
+      `:`
+        <div style="font-size:13px;color:var(--green);font-weight:500;margin-top:4px">${fmtV(val)} · ${r.data||''}</div>
+        <button class="btn-env-d" onclick="desfazerRetirada('${c.chave}','${ms}')">Desfazer</button>
+      `}
+    </div>`;
+  });
+
+  // Fecha coluna direita e ret-grid
+  html+='</div></div>';
+
+  document.getElementById('retContent').innerHTML=html;
+  document.getElementById('retTotalBar').style.display='none';
+}
+
+let retSels = new Set();
+
+function toggleRetSel(chave){
+  if(retSels.has(chave)) retSels.delete(chave);
+  else retSels.add(chave);
+  const el=document.getElementById('retsel-'+chave);
+  if(el) el.className='ci-check'+(retSels.has(chave)?' on':'');
+  atualizarTotalRet();
+}
+
+function atualizarTotalRet(){
+  const bar=document.getElementById('retTotalBar');
+  if(!retSels.size){bar.style.display='none';return;}
+  bar.style.display='block';
+  let total=0;
+  retSels.forEach(chave=>{
+    const inp=document.getElementById('ret-val-'+chave);
+    total+=parseFloat(inp?.value||0)||0;
+  });
+  document.getElementById('retTotalVal').textContent=fmtV(total);
+  document.getElementById('retTotalCount').textContent=retSels.size+' item'+(retSels.size>1?'s':'');
+}
+
+async function programarRetirada(comp, ms, val){
+  // Se já agendado, remover
+  if(agendRetMes[comp]){
+    await fetch(`${SB_URL}/rest/v1/agendamentos?mes=eq.${ms}&componente=eq.${comp}`,{method:'DELETE',headers:SB_HDR});
+    delete agendRetMes[comp];
+    await atualizarRetirada();
+    toast('Agendamento removido');
+    return;
+  }
+  const ano = ms.split('-')[0];
+  const m = ms.split('-')[1];
+  const dataDefault = `${ano}-${m}-05`;
+  
+  const existing = document.getElementById('modalProgr');
+  if(existing) existing.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'modalProgr';
+  modal.style.cssText = `position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;background:var(--bg);border-top:1px solid var(--border);border-radius:16px 16px 0 0;padding:16px;z-index:200;box-shadow:0 -4px 24px rgba(0,0,0,.15)`;
+  modal.innerHTML = `
+    <div style="font-size:13px;font-weight:600;margin-bottom:12px">📅 Programar retirada — ${comp}</div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+      <label style="font-size:12px;color:var(--text3);white-space:nowrap">Valor:</label>
+      <input type="number" id="inputValProgrRet" value="${Number(val).toFixed(2)}" step="0.01" style="flex:1;padding:8px 10px;border-radius:var(--rs);border:1px solid var(--border2);background:var(--bg2);color:var(--text);font-size:13px;font-family:inherit">
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+      <label style="font-size:12px;color:var(--text3);white-space:nowrap">Data:</label>
+      <input type="date" id="inputDataProgrRet" value="${dataDefault}" style="flex:1;padding:8px 10px;border-radius:var(--rs);border:1px solid var(--border2);background:var(--bg2);color:var(--text);font-size:13px;font-family:inherit">
+    </div>
+    <div style="display:flex;gap:6px">
+      <button onclick="confirmarProgramarRet('${comp}','${ms}',${val})" style="flex:1;padding:10px;background:var(--purple-l);border:1px solid var(--purple-m);border-radius:var(--rs);color:var(--purple);font-size:13px;font-weight:500;cursor:pointer;font-family:inherit">Confirmar</button>
+      <button onclick="document.getElementById('modalProgr').remove()" style="padding:10px 14px;background:none;border:1px solid var(--border2);border-radius:var(--rs);color:var(--text3);font-size:13px;cursor:pointer;font-family:inherit">Cancelar</button>
+    </div>`;
+  document.querySelector('.app').appendChild(modal);
+}
+
+async function confirmarProgramarRet(comp, ms, val){
+  const dataISO = document.getElementById('inputDataProgrRet')?.value;
+  if(!dataISO) return;
+  const parts = dataISO.split('-');
+  const dataFmt = `${parts[2]}/${parts[1]}/${parts[0]}`;
+  const valFinal = parseFloat(document.getElementById('inputValProgrRet')?.value)||val;
+  await sbUpsert('agendamentos', `mes=eq.${ms}&componente=eq.${comp}&forma=eq.ret`, {mes:ms,valor:valFinal,forma:'ret',data_programada:dataFmt,componente:comp});
+  agendRetMes[comp]={valor:valFinal,data:dataFmt};
+  document.getElementById('modalProgr')?.remove();
+  await atualizarRetirada();
+  toast('Retirada programada para '+dataFmt+'!');
+}
+
+async function programarSelecionadosRet(){
+  const ms = mesStr(mesRet.y, mesRet.m);
+  const ano = ms.split('-')[0];
+  const m = ms.split('-')[1];
+  const dataDefault = `${ano}-${m}-05`;
+
+  const existing = document.getElementById('modalProgr');
+  if(existing) existing.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'modalProgr';
+  modal.style.cssText = `position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;background:var(--bg);border-top:1px solid var(--border);border-radius:16px 16px 0 0;padding:16px;z-index:200;box-shadow:0 -4px 24px rgba(0,0,0,.15)`;
+  modal.innerHTML = `
+    <div style="font-size:13px;font-weight:600;margin-bottom:12px">📅 Programar retiradas selecionadas</div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+      <label style="font-size:12px;color:var(--text3);white-space:nowrap">Data:</label>
+      <input type="date" id="inputDataProgrRetSel" value="${dataDefault}" style="flex:1;padding:8px 10px;border-radius:var(--rs);border:1px solid var(--border2);background:var(--bg2);color:var(--text);font-size:13px;font-family:inherit">
+    </div>
+    <div style="display:flex;gap:6px">
+      <button onclick="confirmarProgramarRetSel()" style="flex:1;padding:10px;background:var(--purple-l);border:1px solid var(--purple-m);border-radius:var(--rs);color:var(--purple);font-size:13px;font-weight:500;cursor:pointer;font-family:inherit">Confirmar</button>
+      <button onclick="document.getElementById('modalProgr').remove()" style="padding:10px 14px;background:none;border:1px solid var(--border2);border-radius:var(--rs);color:var(--text3);font-size:13px;cursor:pointer;font-family:inherit">Cancelar</button>
+    </div>`;
+  document.querySelector('.app').appendChild(modal);
+}
+
+async function confirmarProgramarRetSel(){
+  const dataISO = document.getElementById('inputDataProgrRetSel')?.value;
+  if(!dataISO) return;
+  const parts = dataISO.split('-');
+  const dataFmt = `${parts[2]}/${parts[1]}/${parts[0]}`;
+  const ms = mesStr(mesRet.y, mesRet.m);
+  for(const chave of retSels){
+    const inp = document.getElementById('ret-val-'+chave);
+    const val = parseFloat(inp?.value||0)||0;
+    await sbUpsert('agendamentos', `mes=eq.${ms}&componente=eq.${chave}&forma=eq.ret`, {conta_id:null,mes:ms,valor:val,forma:'ret',data_programada:dataFmt,componente:chave});
+    agendRetMes[chave]={valor:val,data:dataFmt};
+  }
+  retSels.clear();
+  document.getElementById('retTotalBar').style.display='none';
+  document.getElementById('modalProgr')?.remove();
+  await atualizarRetirada();
+  toast('Retiradas programadas para '+dataFmt+'!');
+}
+
+async function enviarSelecionados(){
+  const ms=mesStr(mesRet.y,mesRet.m);
+  for(const chave of retSels){
+    await enviarRetirada(chave,ms);
+  }
+  retSels.clear();
+  document.getElementById('retTotalBar').style.display='none';
+}
+
+async function enviarRetirada(comp,ms){
+  const val=parseFloat(document.getElementById('ret-val-'+comp)?.value)||0;
+  const data=document.getElementById('ret-data-'+comp)?.value||'';
+  const dataFmt=data?data.split('-').reverse().join('/'):'';
+  // Verifica se já estava enviada (idempotência: não duplicar saldo)
+  const jaEnviada = retiradaMes[comp]?.enviado === true;
+  await sbUpsert('retiradas', `componente=eq.${comp}&mes=eq.${ms}`, {componente:comp,mes:ms,valor:val,enviado:true,data_envio:dataFmt});
+  // Movimenta saldo só se ainda não estava marcada como enviada
+  if(!jaEnviada && val > 0){
+    await abaterSaldo('llg', val);
+    await reporSaldo('pessoal', val);
+  }
+  dadosFinanceiros={};
+  toast('Retirada confirmada!');
+  await atualizarRetirada();
+}
+
+async function desfazerRetirada(comp,ms){
+  const compNome = componentesRet.find(c=>c.chave===comp)?.nome || comp;
+  if(!confirm(`Desfazer retirada de "${compNome}"?\n\nO valor voltará para a LLG e sairá do pessoal.`)) return;
+  const val=retiradaMes[comp]?.valor||0;
+  const estavaEnviada = retiradaMes[comp]?.enviado === true;
+  await sbUpsert('retiradas', `componente=eq.${comp}&mes=eq.${ms}`, {componente:comp,mes:ms,valor:val,enviado:false});
+  // Estorna saldo: o que saiu da LLG volta, o que entrou no pessoal sai
+  if(estavaEnviada && val > 0){
+    await reporSaldo('llg', val);
+    await abaterSaldo('pessoal', val);
+  }
+  dadosFinanceiros={};
+  toast('Desfeito');
+  await atualizarRetirada();
+}
+
+// RELATORIO
+let todosGastos = [];
+let catAtual = 'all';
+let mesGastoFiltro = 'all';
+let porBenefGlobal = {};
+let benefSelecionados = new Set();
+
+// Helper: extrai mês "YYYY-MM" de uma data BR "DD/MM/YYYY" ou retorna o campo mes original
+function extrairMesISO(g){
+  if(g.data_lancamento && /^\d{2}\/\d{2}\/\d{4}$/.test(g.data_lancamento)){
+    const [d,m,y] = g.data_lancamento.split('/');
+    return `${y}-${m}`;
+  }
+  // Fallback: tenta normalizar do campo mes (suja, mas serve)
+  if(g.mes){
+    const meses = {'Janeiro':'01','Fevereiro':'02','Março':'03','Abril':'04','Maio':'05','Junho':'06','Julho':'07','Agosto':'08','Setembro':'09','Outubro':'10','Novembro':'11','Dezembro':'12'};
+    const partes = g.mes.split(' ');
+    const mNum = meses[partes[0]];
+    const ano = partes[1] || hoje.getFullYear();
+    if(mNum) return `${ano}-${mNum}`;
+  }
+  return null;
+}
+
+function labelMesISO(iso){
+  if(!iso) return '';
+  const [y,m] = iso.split('-');
+  return `${MESES_PT[parseInt(m)-1]} ${y}`;
+}
+
+async function carregarRelatorio(){
+  // Parcelamentos: conta como parcelado se tem mes_inicio + mes_fim (mais de 1 mês de intervalo)
+  // ou se tem parcela_total explicito
+  const parc=contas.filter(c=>{
+    if(!c.mes_fim) return false;
+    if(c.parcela_total) return true;
+    // Detecta parcelamento automático pelo intervalo
+    if(c.mes_inicio){
+      const [iy,im]=c.mes_inicio.split('-').map(Number);
+      const [fy,fm]=c.mes_fim.split('-').map(Number);
+      const meses = (fy-iy)*12 + (fm-im) + 1;
+      return meses > 1; // tem que ter pelo menos 2 meses pra ser parcelamento
+    }
+    return false;
+  });
+  let htmlParc='';
+  parc.forEach(c=>{
+    const[fy,fm]=c.mes_fim.split('-').map(Number);
+    // Calcula parcela_total: usa o campo se existir, senão calcula pelo intervalo
+    let totalParc = c.parcela_total;
+    let mesI;
+    if(c.mes_inicio){
+      const [iy,im]=c.mes_inicio.split('-').map(Number);
+      mesI = new Date(iy, im-1);
+      if(!totalParc){
+        totalParc = (fy-iy)*12 + (fm-im) + 1;
+      }
+    } else {
+      const mesF=new Date(fy,fm-1);
+      mesI=new Date(mesF.getFullYear(),mesF.getMonth()-totalParc+1);
+    }
+    const mesAtualDate=new Date(hoje.getFullYear(),hoje.getMonth());
+    // Pagas: meses decorridos desde mes_inicio (clampado entre 0 e totalParc)
+    let pagas = Math.round((mesAtualDate-mesI)/(1000*60*60*24*30))+1;
+    pagas = Math.max(0, Math.min(totalParc, pagas));
+    const restam=totalParc-pagas;
+    const pct=Math.round((pagas/totalParc)*100);
+    const quitado = restam === 0;
+    htmlParc+=`<div class="rel-card" data-quitado="${quitado}" style="${quitado?'opacity:.65':''}">
+      <div class="rel-nome">${c.nome} <span style="font-size:11px;color:var(--text3)">${c.beneficiario}</span>
+        ${quitado?`<span style="background:var(--green-l);color:var(--green);font-size:10px;font-weight:600;padding:2px 6px;border-radius:8px;margin-left:6px;letter-spacing:.04em">✓ QUITADO</span>`:''}
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text3);margin-bottom:4px">
+        <span>${pagas}/${totalParc} parcelas · ${fmtV(c.valor)}/mês</span>
+        <span style="color:${restam<=2?'var(--green)':'var(--amber)'}">${restam} restam</span>
+      </div>
+      <div class="parc-bar"><div class="parc-fill" style="width:${pct}%"></div></div>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">Término: ${MESES_PT[fm-1]}/${fy} · Total restante: ${fmtV(restam*c.valor)}</div>
+    </div>`;
+  });
+  // Ordena: quitados no final
+  const containerParc = document.getElementById('relParcelamentos');
+  containerParc.innerHTML = htmlParc || '<div class="empty">Nenhum parcelamento ativo.</div>';
+  // Reordena: quitados por último
+  const cards = Array.from(containerParc.querySelectorAll('.rel-card'));
+  cards.sort((a,b) => (a.dataset.quitado==='true'?1:0) - (b.dataset.quitado==='true'?1:0));
+  cards.forEach(c => containerParc.appendChild(c));
+
+  // Carrega pagamentos pessoais e gastos para popular dropdown global
+  const [pagamentos, gastosChatRaw] = await Promise.all([
+    sbGet('pagamentos_mes','select=*&pago=eq.true'),
+    sbGet('gastos','select=*&order=created_at.desc')
+  ]);
+  todosGastos = Array.isArray(gastosChatRaw) ? gastosChatRaw : [];
+
+  // Conjunto de meses disponíveis (de pagamentos + gastos), em formato YYYY-MM
+  const mesesSet = new Set();
+  if(Array.isArray(pagamentos)) pagamentos.forEach(p=>{if(p.mes && /^\d{4}-\d{2}$/.test(p.mes)) mesesSet.add(p.mes);});
+  todosGastos.forEach(g=>{const iso = extrairMesISO(g); if(iso) mesesSet.add(iso);});
+  const mesesOrdenados = [...mesesSet].sort().reverse();
+
+  // Popular dropdown global
+  const sel = document.getElementById('relMesFiltro');
+  sel.innerHTML = `<option value="all"${mesGastoFiltro==='all'?' selected':''}>Todos os meses</option>` +
+    mesesOrdenados.map(m=>`<option value="${m}"${mesGastoFiltro===m?' selected':''}>${labelMesISO(m)}</option>`).join('');
+
+  // Pagamentos por beneficiário (aplica filtro de mês)
+  porBenefGlobal={};
+  if(Array.isArray(pagamentos)){
+    pagamentos.forEach(p=>{
+      const c=contas.find(x=>x.id===p.conta_id);
+      if(!c||c.tipo!=='pessoal')return;
+      if(mesGastoFiltro!=='all' && p.mes !== mesGastoFiltro) return;
+      const key=c.beneficiario;
+      if(!porBenefGlobal[key]){porBenefGlobal[key]={total:0,items:[]};}
+      porBenefGlobal[key].total+=p.valor_pago||c.valor;
+      const mesExiste=porBenefGlobal[key].items.find(i=>i.mes===p.mes&&i.nome===c.nome);
+      if(mesExiste)mesExiste.val+=(p.valor_pago||c.valor);
+      else porBenefGlobal[key].items.push({mes:p.mes,val:p.valor_pago||c.valor,nome:c.nome});
+    });
+  }
+
+  // Filtros de beneficiário
+  const benefNomes = Object.keys(porBenefGlobal).sort();
+  benefSelecionados = new Set(benefNomes);
+  let htmlFiltros = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">`;
+  htmlFiltros += `<button class="fbtn on-all" id="bf-__all__" onclick="toggleBenef('__all__',this)">Todos</button>`;
+  benefNomes.forEach(n=>{
+    const id=n.replace(/\s+/g,'_');
+    htmlFiltros+=`<button class="fbtn on-all" id="bf-${id}" onclick="toggleBenef('${n}',this)">${n}</button>`;
+  });
+  htmlFiltros+=`</div>`;
+  htmlFiltros+=`<div id="relBenefCards"></div>`;
+  document.getElementById('relBeneficiario').innerHTML=htmlFiltros;
+  renderBenefCards();
+
+  renderGastos();
+}
+
+function toggleBenef(nome, btn){
+  if(nome==='__all__'){
+    const todos=Object.keys(porBenefGlobal);
+    if(benefSelecionados.size===todos.length){
+      benefSelecionados.clear();
+    } else {
+      benefSelecionados=new Set(todos);
+    }
+  } else {
+    if(benefSelecionados.has(nome)) benefSelecionados.delete(nome);
+    else benefSelecionados.add(nome);
+  }
+  // Atualizar visual dos botões
+  Object.keys(porBenefGlobal).forEach(n=>{
+    const id='bf-'+n.replace(/\s+/g,'_');
+    const b=document.getElementById(id);
+    if(b) b.className=benefSelecionados.has(n)?'fbtn on-all':'fbtn';
+  });
+  const allBtn=document.getElementById('bf-__all__');
+  if(allBtn) allBtn.className=benefSelecionados.size===Object.keys(porBenefGlobal).length?'fbtn on-all':'fbtn';
+  renderBenefCards();
+}
+
+function renderBenefCards(){
+  const el=document.getElementById('relBenefCards');
+  if(!el)return;
+  const selecionados=Object.entries(porBenefGlobal)
+    .filter(([n])=>benefSelecionados.has(n))
+    .sort((a,b)=>b[1].total-a[1].total);
+
+  if(!selecionados.length){
+    el.innerHTML='<div class="empty">Selecione um beneficiário.</div>';
+    return;
+  }
+
+  let html='';
+  selecionados.forEach(([nome,info])=>{
+    // Agrupar por nome da conta
+    const porConta={};
+    info.items.forEach(i=>{
+      if(!porConta[i.nome])porConta[i.nome]={total:0,meses:[]};
+      porConta[i.nome].total+=i.val;
+      porConta[i.nome].meses.push({mes:i.mes,val:i.val});
+    });
+    html+=`<div class="rel-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div class="rel-nome">${nome}</div>
+        <span style="font-size:14px;font-weight:600;color:var(--blue)">${fmtV(info.total)}</span>
+      </div>
+      ${Object.entries(porConta).map(([conta,d])=>`
+        <div style="font-size:12px;color:var(--text2);font-weight:500;margin:4px 0 2px">${conta}</div>
+        ${d.meses.sort((a,b)=>a.mes.localeCompare(b.mes)).map(m=>`
+          <div class="rel-row"><span style="color:var(--text3)">${m.mes}</span><span>${fmtV(m.val)}</span></div>
+        `).join('')}
+        <div class="rel-row" style="font-size:12px"><span>Subtotal</span><span style="font-weight:500">${fmtV(d.total)}</span></div>
+      `).join('')}
+    </div>`;
+  });
+  el.innerHTML=html;
+}
+
+function filtrarCat(cat, btn){
+  catAtual = cat;
+  document.querySelectorAll('[id^="catBtn"]').forEach(b=>{
+    b.className='fbtn';
+  });
+  btn.className='fbtn on-all';
+  renderGastos();
+}
+
+function renderGastos(){
+  // Aplica filtros: categoria + mês (filtro vem do dropdown global)
+  let lista = todosGastos;
+  if(catAtual !== 'all'){
+    lista = lista.filter(g=>{
+      const c=(g.categoria||'').toLowerCase();
+      return c.includes(catAtual.toLowerCase());
+    });
+  }
+  if(mesGastoFiltro !== 'all'){
+    lista = lista.filter(g => extrairMesISO(g) === mesGastoFiltro);
+  }
+
+  if(!lista.length){
+    document.getElementById('relGastos').innerHTML = '<div class="empty">Nenhum gasto neste filtro.</div>';
+    return;
+  }
+
+  // Agrupar por categoria para totais
+  const porCat={};
+  lista.forEach(g=>{
+    const cat=g.categoria||'Outros';
+    if(!porCat[cat])porCat[cat]={total:0,items:[]};
+    porCat[cat].total+=g.valor||0;
+    porCat[cat].items.push(g);
+  });
+
+  const totalGeral=lista.reduce((s,g)=>s+(g.valor||0),0);
+  let html = `<div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:var(--rs);padding:10px 12px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
+    <span style="font-size:12px;color:var(--blue);font-weight:600">${lista.length} gastos</span>
+    <span style="font-size:16px;font-weight:600;color:var(--blue)">${fmtV(totalGeral)}</span>
+  </div>`;
+
+  Object.entries(porCat).sort((a,b)=>b[1].total-a[1].total).forEach(([cat,info])=>{
+    html+=`<div class="rel-card" style="margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <div class="rel-nome">${cat}</div>
+        <span style="font-size:13px;font-weight:600;color:var(--blue)">${fmtV(info.total)}</span>
+      </div>
+      ${info.items.slice(0,5).map(g=>`<div class="rel-row">
+        <span style="color:var(--text2)">${g.descricao||''} · ${g.data_lancamento||''}</span>
+        <span>${fmtV(g.valor)}</span>
+      </div>`).join('')}
+      ${info.items.length>5?`<div style="font-size:11px;color:var(--text3);margin-top:4px">+${info.items.length-5} mais</div>`:''}
+    </div>`;
+  });
+
+  document.getElementById('relGastos').innerHTML=html;
+}
+
+function setMesGastoFiltro(mes){
+  mesGastoFiltro = mes;
+  // Recarrega relatório inteiro pra aplicar filtro nos beneficiários também
+  carregarRelatorio();
+}
+
+// CHAT IA
+// Monta system prompt dinâmico baseado em dados reais do banco (não hardcoded)
+async function montarSysPrompt(){
+  // Lista de contas atuais
+  const contasStr = contas.map(c=>{
+    const inicio = c.mes_inicio ? ` desde ${c.mes_inicio}` : '';
+    const fim = c.mes_fim ? `, até ${c.mes_fim}` : '';
+    const cartao = c.forma_padrao==='crt' ? ', cartão' : '';
+    return `${c.id}: ${c.nome} → ${c.beneficiario}: ${fmtV(c.valor)}/mês, dia ${c.dia_vencimento}, ${c.tipo}${cartao}${inicio}${fim}`;
+  }).join('\n');
+
+  // Lucros reais dos últimos 4 meses
+  const meses = [];
+  for(let i=3; i>=0; i--){
+    const d = new Date(hoje.getFullYear(), hoje.getMonth()-i);
+    meses.push({ms: mesStr(d.getFullYear(), d.getMonth()), label: MESES_PT[d.getMonth()].slice(0,3)+'/'+String(d.getFullYear()).slice(2)});
+  }
+  const lucrosArr = await Promise.all(meses.map(m => calcularMes(m.ms)));
+  const lucrosStr = meses.map((m,i) => `${m.label} ${fmtV(lucrosArr[i].lucro)}`).join(' | ');
+
+  // Parcelamentos ativos
+  const parcStr = contas.filter(c=>c.parcela_total&&c.mes_fim).map(c=>{
+    const [fy,fm] = c.mes_fim.split('-').map(Number);
+    return `- ${c.nome} (id ${c.id}): termina ${MESES_PT[fm-1].slice(0,3)}/${String(fy).slice(2)}`;
+  }).join('\n');
+
+  return `Você é o assistente financeiro completo de Lucas Gasparello, dono da LLG Consultoria.
+Data atual: ${hoje.toLocaleDateString('pt-BR')}.
+Saldo LLG: ${fmtV(saldos.llg)} | Saldo pessoal: ${fmtV(saldos.pessoal)}.
+
+CONTAS FIXAS ATIVAS (IDs para referência):
+${contasStr}
+
+PARCELAMENTOS ATIVOS:
+${parcStr || '- nenhum'}
+
+LUCROS LÍQUIDOS REAIS (últimos 4 meses): ${lucrosStr}
+
+AÇÕES DISPONÍVEIS — responda SOMENTE o JSON correspondente, sem markdown:
+
+1. REGISTRAR GASTO:
+"mes" deve ser SEMPRE no formato "YYYY-MM" (exemplo: "2026-05" para maio de 2026). Se o usuário não especificar mês, use o mês atual.
+
+"cat" é a categoria do gasto. Escolha UMA das seguintes (idênticas às do app):
+- "Alimentação" — comida, restaurante, mercado, padaria, doces, lanches
+- "Combustível" — gasolina, álcool, pedágio, estacionamento avulso
+- "Lazer" — cinema, show, viagem, passeio, bar
+- "Pet" — ração, veterinário, banho, pet shop
+- "Compras" — roupas, marketplace, eletrônicos, presentes
+- "Farmácia" — remédios, suplementos
+- "Filhos" — atividades extras dos filhos (esporte, ballet, presentes pra eles, festinha, material escolar avulso)
+- "Outros" — qualquer coisa que não encaixa nas anteriores
+
+NUNCA use "Custo Variável", "Custo Fixo", "Imposto", "Receita" como categoria — esses são tipos contábeis, não categorias de gasto.
+
+{"a":"reg","desc":"nome","valor":0.00,"conta":"empresa|pessoal","mes":"YYYY-MM","cat":"Alimentação|Combustível|Lazer|Pet|Compras|Farmácia|Filhos|Outros","forma":"deb|crt","msg":"confirmação"}
+
+2. ADICIONAR CONTA RECORRENTE:
+mes_inicio é o primeiro mês em que a conta aparece (formato "YYYY-MM"). Se não informado pelo usuário, use o mês atual.
+mes_fim é o último mês em que a conta aparece (opcional, deixe null se for indefinida).
+Se a conta é pontual (ex: "lançar só em abril"), use mes_inicio E mes_fim com o mesmo mês.
+Se é parcelada (ex: "parcelar em 5x começando em junho"), use mes_inicio do primeiro mês, mes_fim do último mês, e parcela_total com o número de parcelas (ex: 5). Sem parcela_total a conta não aparece na aba Relatório como parcelamento.
+{"a":"add_recorrente","desc":"nome","beneficiario":"credor","valor":0.00,"conta":"empresa|pessoal","dia":5,"mes_inicio":"YYYY-MM","mes_fim":"YYYY-MM ou null","parcela_total":null,"msg":"confirmação"}
+
+3. EDITAR CONTA EXISTENTE (mudar valor, dia, beneficiário, mes_inicio, mes_fim):
+{"a":"edit_conta","id":0,"campo":"valor|dia_vencimento|beneficiario|nome|mes_inicio|mes_fim","valor_novo":"novo valor","msg":"confirmação"}
+
+4. DESATIVAR CONTA (encerrar pagamento — usar apenas quando o usuário disser claramente "cancelar", "encerrar", "não pago mais" ou "excluir"):
+{"a":"desativar_conta","id":0,"msg":"confirmação"}
+
+⚠ IMPORTANTE — "QUITAR" NÃO É DESATIVAR:
+Quando o usuário disser "quitar", "quitei", "paguei tudo", "adiantei parcelas", "paguei as restantes" ou similar sobre um parcelamento, ISSO É PAGAMENTO, não desativação. NUNCA use "desativar_conta" nesse caso, e NUNCA altere o mes_fim para "encurtar" o parcelamento.
+
+O correto é:
+- Se o usuário DISSE explicitamente quantas parcelas quitou (ex: "quitei 3 parcelas do Insta360"): use "pagar_conta" com valor = N × valor_parcela, no mês atual.
+- Se o usuário NÃO disse quantas ("quitei o Insta360", "paguei tudo"): PERGUNTE antes de agir. Responda em texto perguntando quantas parcelas restantes ele pagou de uma vez. Só depois da resposta, use "pagar_conta".
+- Se o usuário quitar TODAS as parcelas restantes de um parcelamento, ainda assim NÃO desative a conta nem mude o mes_fim. Apenas registre o pagamento com o valor total. A conta continuará ativa até o mes_fim original.
+
+5. MARCAR CONTA COMO PAGA:
+{"a":"pagar_conta","id":0,"valor":0.00,"forma":"pes|llg|crt","msg":"confirmação"}
+
+6. DESFAZER PAGAMENTO DE CONTA:
+{"a":"desfazer_conta","id":0,"msg":"confirmação"}
+
+7. AJUSTAR SALDO:
+{"a":"ajustar_saldo","conta":"llg|pessoal","valor":0.00,"msg":"confirmação"}
+
+8. REGISTRAR RETIRADA LLG:
+{"a":"retirada","componente":"pro_labore|plano_saude|moto|lucros","valor":0.00,"data":"dd/mm/aaaa","msg":"confirmação"}
+
+9. DESFAZER GASTO VARIÁVEL (estornar gasto da tabela gastos — devolve o valor ao saldo):
+Use o id que aparece em GASTOS VARIÁVEIS RECENTES.
+{"a":"desfazer_gasto","id":0,"msg":"confirmação"}
+
+10. EDITAR GASTO VARIÁVEL (corrigir valor, descrição ou categoria):
+{"a":"edit_gasto","id":0,"campo":"valor|descricao|categoria","valor_novo":"novo valor","msg":"confirmação"}
+
+11. REGISTRAR RECEITA REAL (já recebida — dinheiro caiu na conta LLG):
+Use SEMPRE que o usuário falar que recebeu um valor da empresa cliente.
+"mes" no formato YYYY-MM. "data" no formato dd/mm/yyyy.
+Repõe o saldo LLG automaticamente.
+{"a":"add_receita","cliente":"nome cliente","descricao":"serviço","valor":0.00,"mes":"YYYY-MM","data":"dd/mm/yyyy","msg":"confirmação"}
+
+12. REGISTRAR RECEITA PREVISTA (ainda não recebida, mas previsão de receber):
+Use quando o usuário falar de previsão futura (ex: "Global vai pagar 20k em julho").
+NÃO movimenta saldo. Aparece como projeção até ser marcada como recebida.
+{"a":"add_receita_prevista","cliente":"nome cliente","descricao":"serviço","valor":0.00,"mes":"YYYY-MM","msg":"confirmação"}
+
+13. MARCAR RECEITA COMO RECEBIDA (confirma quando o dinheiro caiu):
+Use quando o usuário falar que uma receita prevista foi recebida.
+Repõe o saldo LLG automaticamente.
+{"a":"marcar_receita_recebida","id":0,"data":"dd/mm/yyyy","msg":"confirmação"}
+
+PARA PERGUNTAS: responda diretamente, máximo 4 linhas, objetivo.`;
+}
+
+
+let chatHistory = [];
+
+function addMsg(txt,tipo){
+  const el=document.getElementById('msgs'),d=document.createElement('div');
+  d.className='m '+tipo;d.innerHTML=txt;el.appendChild(d);el.scrollTop=el.scrollHeight;
+}
+function showTyping(){
+  const el=document.getElementById('msgs'),d=document.createElement('div');
+  d.className='m a';d.id='typ';
+  d.innerHTML='<div class="dot"><span></span><span></span><span></span></div>';
+  el.appendChild(d);el.scrollTop=el.scrollHeight;
+}
+function rmTyping(){const t=document.getElementById('typ');if(t)t.remove();}
+
+async function sendMsg(){
+  const inp=document.getElementById('inp'),txt=inp.value.trim();if(!txt)return;
+  inp.value='';addMsg(txt,'u');showTyping();
+  chatHistory.push({role:'user',content:txt});
+  if(chatHistory.length>6) chatHistory=chatHistory.slice(-6);
+  try{
+    // Buscar contexto dinâmico do banco
+    const ms = mesStr(mesAtual.y, mesAtual.m);
+    const [gastosRec, pagsRec, recPrev] = await Promise.all([
+      sbGet('gastos',`select=*&order=created_at.desc&limit=30`),
+      sbGet('pagamentos_mes',`select=*&mes=eq.${ms}&pago=eq.true&order=data_pagamento.desc`),
+      sbGet('receitas',`select=*&recebido=eq.false&order=mes.asc&limit=20`)
+    ]);
+    const ctxGastos = Array.isArray(gastosRec) ? gastosRec
+      .map(g=>`id=${g.id} | ${g.data_lancamento} | ${g.descricao} | R$${g.valor} | ${g.categoria} | ${g.conta}`)
+      .join('\n') : '';
+    const ctxPagas = Array.isArray(pagsRec) ? pagsRec
+      .map(p=>{ const c=contas.find(x=>x.id===p.conta_id); return c?`${p.data_pagamento||'?'} | ${c.nome} | R$${p.valor_pago} | ${p.forma==='pes'?'débito pessoal':p.forma==='llg'?'débito empresa':'cartão'} | ${c.tipo}`:null; })
+      .filter(Boolean).join('\n') : '';
+    const ctxRecPrev = Array.isArray(recPrev) ? recPrev
+      .map(r=>`id=${r.id} | ${r.mes} | ${r.cliente} | ${r.descricao||''} | R$${r.valor}`)
+      .join('\n') : '';
+    const sysBase = await montarSysPrompt();
+    const sysComCtx = sysBase +
+      `\n\nCONTAS PAGAS ESTE MÊS (${mesLabel(mesAtual.y,mesAtual.m)}) — data | nome | valor | forma | tipo:\n${ctxPagas||'nenhuma'}` +
+      `\n\nGASTOS VARIÁVEIS RECENTES — data | descrição | valor | categoria | conta:\n${ctxGastos||'nenhum'}` +
+      `\n\nRECEITAS PREVISTAS (não recebidas) — id | mês | cliente | descrição | valor:\n${ctxRecPrev||'nenhuma'}`;
+    const r=await fetch('/api/chat',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:800,system:sysComCtx,messages:chatHistory})
+    });
+    const d=await r.json(),resp=d.content?.[0]?.text||'';
+    rmTyping();
+    if(!resp){
+      const errMsg=d.error?.message||d.type||JSON.stringify(d);
+      addMsg(`Erro da API: ${errMsg}`,'a');
+      return;
+    }
+    // Adicionar resposta ao histórico
+    chatHistory.push({role:'assistant',content:resp});
+    
+    // Extrair todos os JSONs da resposta
+    const jsonMatches = [];
+    const jsonRegex = /\{[^{}]*"a"\s*:\s*"[^"]*"[^{}]*\}/g;
+    let match;
+    while((match = jsonRegex.exec(resp)) !== null){
+      try{ jsonMatches.push(JSON.parse(match[0])); }catch(e){}
+    }
+    // Se não encontrou com regex, tenta parse simples
+    if(!jsonMatches.length){
+      try{ 
+        const p=JSON.parse(resp.replace(/```json|```/g,'').trim());
+        if(p&&p.a) jsonMatches.push(p);
+      }catch(e){}
+    }
+
+    if(jsonMatches.length){
+      for(const parsed of jsonMatches){
+        await processarAcaoChat(parsed);
+      }
+    } else {
+      addMsg(resp.replace(/\n/g,'<br>'),'a');
+    }
+  }catch(e){rmTyping();addMsg('Erro de conexão.','a');}
+}
+
+async function processarAcaoChat(parsed){
+// Normaliza qualquer formato de "mes" que venha da IA para YYYY-MM
+function normalizarMesIA(m){
+  if(!m) return mesStr(mesAtual.y, mesAtual.m);
+  // Já está em YYYY-MM
+  if(/^\d{4}-\d{2}$/.test(m)) return m;
+  // "Abril 2026" ou só "Abril"
+  const meses = {'Janeiro':'01','Fevereiro':'02','Março':'03','Abril':'04','Maio':'05','Junho':'06','Julho':'07','Agosto':'08','Setembro':'09','Outubro':'10','Novembro':'11','Dezembro':'12'};
+  const partes = m.split(' ');
+  const mNum = meses[partes[0]];
+  if(mNum){
+    const ano = partes[1] || mesAtual.y;
+    return `${ano}-${mNum}`;
+  }
+  // Fallback: mês atual
+  return mesStr(mesAtual.y, mesAtual.m);
+}
+
+  if(parsed.a==='reg'){
+    const forma=parsed.forma||'deb';
+    const mesISO = normalizarMesIA(parsed.mes);
+    addMsg(`<b>${parsed.desc}</b> <span class="bdt ${parsed.conta==='empresa'?'bd-l':'bd-p'}">${parsed.conta==='empresa'?'LLG':'Pes.'}</span><br><span style="color:var(--red)">-${fmtV(parsed.valor)}</span> · ${parsed.cat}<br><span style="font-size:12px;color:var(--green)">${parsed.msg}</span>`,'g');
+    await sbPost('gastos',{descricao:parsed.desc,valor:parsed.valor,conta:parsed.conta,mes:mesISO,categoria:parsed.cat,forma_pagamento:'Via chat',data_lancamento:hoje.toLocaleDateString('pt-BR')});
+    if(forma!=='crt'){
+      const contaSaldo=parsed.conta==='empresa'?'llg':'pessoal';
+      await abaterSaldo(contaSaldo,parsed.valor);
+      if(parsed.cat==='Retirada'&&parsed.conta==='empresa') await reporSaldo('pessoal',parsed.valor);
+    }
+    toast('Gasto registrado!');
+
+  } else if(parsed.a==='add_recorrente'){
+    // Calcula parcela_total automaticamente se tem mes_inicio e mes_fim diferentes (e a IA não passou)
+    let parcelaTotal = parsed.parcela_total || null;
+    if(!parcelaTotal && parsed.mes_inicio && parsed.mes_fim && parsed.mes_inicio !== parsed.mes_fim){
+      const [iy,im]=parsed.mes_inicio.split('-').map(Number);
+      const [fy,fm]=parsed.mes_fim.split('-').map(Number);
+      const meses = (fy-iy)*12 + (fm-im) + 1;
+      if(meses > 1) parcelaTotal = meses;
+    }
+    const novaConta = {
+      nome: parsed.desc,
+      beneficiario: parsed.beneficiario||parsed.desc,
+      valor: parsed.valor,
+      dia_vencimento: parsed.dia||5,
+      tipo: parsed.conta==='empresa'?'empresa':'pessoal',
+      forma_padrao: parsed.conta==='empresa'?'llg':'pes',
+      categoria: 'outros',
+      ativo: true,
+      mes_inicio: parsed.mes_inicio || mesStr(mesAtual.y, mesAtual.m),
+      mes_fim: parsed.mes_fim || null,
+      parcela_total: parcelaTotal
+    };
+    await sbPost('contas_fixas', novaConta);
+    await carregarContas(); await carregarStatusMes(mesStr(mesAtual.y,mesAtual.m)); renderDias(); renderTodasContas();
+    let detalhes = `${fmtV(parsed.valor)}/mês · dia ${parsed.dia||5} · ${parsed.conta==='empresa'?'LLG':'Pessoal'}`;
+    if(parcelaTotal) detalhes += ` · ${parcelaTotal}x parcelas`;
+    if(parsed.mes_inicio === parsed.mes_fim && parsed.mes_inicio) detalhes += ` · pontual em ${parsed.mes_inicio}`;
+    else if(parsed.mes_inicio || parsed.mes_fim) detalhes += ` · ${parsed.mes_inicio||'?'} → ${parsed.mes_fim||'sem fim'}`;
+    addMsg(`✅ <b>${parsed.desc}</b> adicionada!<br>${detalhes}`,'g');
+    toast('Conta adicionada!');
+
+  } else if(parsed.a==='edit_conta'){
+    await fetch(`${SB_URL}/rest/v1/contas_fixas?id=eq.${parsed.id}`,{method:'PATCH',headers:{...SB_HDR},body:JSON.stringify({[parsed.campo]:parsed.valor_novo})});
+    await carregarContas();await carregarStatusMes(mesStr(mesAtual.y,mesAtual.m));renderDias();renderTodasContas();
+    addMsg(`✅ ${parsed.msg}`,'g');toast('Conta atualizada!');
+
+  } else if(parsed.a==='desativar_conta'){
+    await fetch(`${SB_URL}/rest/v1/contas_fixas?id=eq.${parsed.id}`,{method:'PATCH',headers:{...SB_HDR},body:JSON.stringify({ativo:false})});
+    await carregarContas();await carregarStatusMes(mesStr(mesAtual.y,mesAtual.m));renderDias();renderTodasContas();
+    addMsg(`✅ ${parsed.msg}`,'g');toast('Conta desativada!');
+
+  } else if(parsed.a==='pagar_conta'){
+    const ms=mesStr(mesAtual.y,mesAtual.m);
+    const c=contas.find(x=>x.id===parsed.id);
+    if(!statusMes[parsed.id])statusMes[parsed.id]={pago:false,valorPago:parsed.valor,forma:parsed.forma||'pes',selecionado:false};
+    statusMes[parsed.id]={...statusMes[parsed.id],pago:true,valorPago:parsed.valor,forma:parsed.forma||'pes'};
+    await salvarStatusMes(parsed.id,ms,{pago:true,valor_pago:parsed.valor,forma:parsed.forma||'pes',data_pagamento:hoje.toLocaleDateString('pt-BR')});
+    if(parsed.forma!=='crt'&&c) await abaterSaldo(c.tipo==='empresa'?'llg':'pessoal',parsed.valor);
+    renderTodasContas();renderDias();
+    addMsg(`✅ ${parsed.msg}`,'g');toast('Conta paga!');
+
+  } else if(parsed.a==='desfazer_conta'){
+    const ms=mesStr(mesAtual.y,mesAtual.m);
+    const c=contas.find(x=>x.id===parsed.id);
+    const v=statusMes[parsed.id]?.valorPago||0;
+    const forma=statusMes[parsed.id]?.forma||'pes';
+    if(statusMes[parsed.id])statusMes[parsed.id]={...statusMes[parsed.id],pago:false};
+    await salvarStatusMes(parsed.id,ms,{pago:false,valor_pago:v,forma});
+    if(forma!=='crt'&&c) await reporSaldo(c.tipo==='empresa'?'llg':'pessoal',v);
+    renderTodasContas();renderDias();
+    addMsg(`✅ ${parsed.msg}`,'g');toast('Desfeito!');
+
+  } else if(parsed.a==='ajustar_saldo'){
+    saldos[parsed.conta]=parsed.valor;
+    await fetch(`${SB_URL}/rest/v1/saldos?id=eq.${parsed.conta}`,{method:'PATCH',headers:{...SB_HDR},body:JSON.stringify({valor:parsed.valor})});
+    atualizarPillsSaldo();
+    addMsg(`✅ ${parsed.msg}`,'g');toast('Saldo atualizado!');
+
+  } else if(parsed.a==='retirada'){
+    const ms=mesStr(mesRet.y,mesRet.m);
+    await sbUpsert('retiradas', `componente=eq.${parsed.componente}&mes=eq.${ms}`, {componente:parsed.componente,mes:ms,valor:parsed.valor,enviado:true,data_envio:parsed.data||hoje.toLocaleDateString('pt-BR')});
+    retiradaMes[parsed.componente]={valor:parsed.valor,enviado:true,data:parsed.data};
+    await abaterSaldo('llg',parsed.valor);
+    await reporSaldo('pessoal',parsed.valor);
+    addMsg(`✅ ${parsed.msg}`,'g');toast('Retirada registrada!');
+
+  } else if(parsed.a==='desfazer_gasto'){
+    // Buscar o gasto pra saber valor e conta antes de deletar
+    const gastoData = await sbGet('gastos', `select=*&id=eq.${parsed.id}`);
+    if(!Array.isArray(gastoData) || !gastoData.length){
+      addMsg(`❌ Gasto id ${parsed.id} não encontrado.`,'a');
+      return;
+    }
+    const g = gastoData[0];
+    await sbDelete('gastos', `id=eq.${parsed.id}`);
+    // Repor saldo (mesma lógica do reg, mas ao contrário)
+    const contaSaldo = g.conta==='empresa'?'llg':'pessoal';
+    await reporSaldo(contaSaldo, g.valor);
+    addMsg(`✅ ${parsed.msg}<br><span style="font-size:12px;color:var(--text3)">Estornado: ${g.descricao} · ${fmtV(g.valor)} (${g.conta})</span>`,'g');
+    toast('Gasto removido!');
+
+  } else if(parsed.a==='edit_gasto'){
+    const dados = {};
+    dados[parsed.campo] = parsed.valor_novo;
+    // Se mudou o valor, ajustar saldo (só repõe a diferença)
+    if(parsed.campo === 'valor'){
+      const gastoData = await sbGet('gastos', `select=*&id=eq.${parsed.id}`);
+      if(Array.isArray(gastoData) && gastoData.length){
+        const g = gastoData[0];
+        const diff = Number(parsed.valor_novo) - g.valor;
+        const contaSaldo = g.conta==='empresa'?'llg':'pessoal';
+        if(diff > 0) await abaterSaldo(contaSaldo, diff);
+        else if(diff < 0) await reporSaldo(contaSaldo, -diff);
+      }
+    }
+    await sbPatch('gastos', `id=eq.${parsed.id}`, dados);
+    addMsg(`✅ ${parsed.msg}`,'g');
+    toast('Gasto atualizado!');
+
+  } else if(parsed.a==='add_receita'){
+    const mesISO = normalizarMesIA(parsed.mes);
+    await sbPost('receitas', {
+      mes: mesISO,
+      cliente: parsed.cliente,
+      descricao: parsed.descricao || 'Serviço',
+      valor: parsed.valor,
+      recebido: true,
+      data_recebimento: parsed.data || hoje.toLocaleDateString('pt-BR')
+    });
+    await reporSaldo('llg', parsed.valor);
+    dadosFinanceiros = {};
+    addMsg(`✅ ${parsed.msg}<br><span style="font-size:12px;color:var(--text3)">${parsed.cliente} · ${fmtV(parsed.valor)} · ${mesISO}</span>`,'g');
+    toast('Receita registrada!');
+
+  } else if(parsed.a==='add_receita_prevista'){
+    const mesISO = normalizarMesIA(parsed.mes);
+    await sbPost('receitas', {
+      mes: mesISO,
+      cliente: parsed.cliente,
+      descricao: parsed.descricao || 'Serviço',
+      valor: parsed.valor,
+      recebido: false,
+      data_recebimento: null
+    });
+    dadosFinanceiros = {};
+    addMsg(`✅ ${parsed.msg}<br><span style="font-size:12px;color:var(--text3)">📅 Previsão: ${parsed.cliente} · ${fmtV(parsed.valor)} · ${mesISO}</span>`,'g');
+    toast('Receita prevista!');
+
+  } else if(parsed.a==='marcar_receita_recebida'){
+    const recData = await sbGet('receitas', `select=*&id=eq.${parsed.id}`);
+    if(!Array.isArray(recData) || !recData.length){
+      addMsg(`❌ Receita id ${parsed.id} não encontrada.`,'a');
+      return;
+    }
+    const r = recData[0];
+    if(r.recebido){
+      addMsg(`⚠ Essa receita já estava marcada como recebida.`,'a');
+      return;
+    }
+    await sbPatch('receitas', `id=eq.${parsed.id}`, {
+      recebido: true,
+      data_recebimento: parsed.data || hoje.toLocaleDateString('pt-BR')
+    });
+    await reporSaldo('llg', r.valor);
+    dadosFinanceiros = {};
+    addMsg(`✅ ${parsed.msg}<br><span style="font-size:12px;color:var(--text3)">${r.cliente} · ${fmtV(r.valor)} recebido</span>`,'g');
+    toast('Receita confirmada!');
+  }
+}
+
+async function gerarJSON(){
+  const gastos=await sbGet('gastos','select=*&order=created_at.desc&limit=50');
+  const pagsMes=await sbGet('pagamentos_mes','select=*&pago=eq.true&order=created_at.desc&limit=50');
+  document.getElementById('inp').value=`Gere o JSON para o agente Excel com estes dados:\nGastos: ${JSON.stringify(gastos?.slice?.(0,10)||[])}\nPagamentos: ${JSON.stringify(pagsMes?.slice?.(0,10)||[])}`;
+  showTab('chat',document.querySelectorAll('.tb')[3]);
+  sendMsg();
+}
+
+function showTab(id,btn){
+  document.querySelectorAll('.pnl').forEach(p=>p.classList.remove('on'));
+  document.querySelectorAll('.tb').forEach(b=>b.classList.remove('on'));
+  document.getElementById('pnl-'+id).classList.add('on');btn.classList.add('on');
+  if(id==='relatorio')carregarRelatorio();
+  if(id==='retirada')atualizarRetirada();
+  if(id==='painel')carregarPainel();
+  if(id==='graficos')carregarGraficos();
+}
+
+// NOTIFICAÇÕES DE CONTAS VENCENDO
+function verificarNotificacoes(){
+  const ms=mesStr(mesAtual.y,mesAtual.m);
+  if(!isHoje(mesAtual.y,mesAtual.m))return;
+  const vencendo=contas.filter(c=>{
+    if(statusMes[c.id]?.pago)return false;
+    const dp=c.dia_vencimento-DIA_HOJE;
+    return dp>=0&&dp<=3;
+  });
+  if(!vencendo.length)return;
+  const banner=document.getElementById('notifBanner');
+  const lista=document.getElementById('notifLista');
+  banner.style.display='block';
+  lista.innerHTML=vencendo.map(c=>{
+    const dp=c.dia_vencimento-DIA_HOJE;
+    const label=dp===0?'Hoje':dp===1?'Amanhã':`Em ${dp} dias`;
+    return `<div style="font-size:12px;color:var(--amber);display:flex;justify-content:space-between"><span>${c.nome} — ${label}</span><span style="font-weight:600">${fmtV(c.valor)}</span></div>`;
+  }).join('');
+}
+
+// GASTO RÁPIDO
+function toggleGastoRapido(){
+  const el=document.getElementById('gastoRapidoChat');
+  el.style.display=el.style.display==='none'?'block':'none';
+  if(el.style.display==='block') document.getElementById('grDesc').focus();
+}
+
+async function salvarGastoRapido(){
+  const desc=document.getElementById('grDesc').value.trim();
+  const valor=parseFloat(document.getElementById('grValor').value);
+  const cat=document.getElementById('grCat').value;
+  const conta=document.getElementById('grConta').value;
+  // Validações
+  if(!desc || desc.length < 2){toast('Descrição precisa ter ao menos 2 caracteres');return;}
+  if(!valor || isNaN(valor) || valor <= 0){toast('Valor precisa ser maior que zero');return;}
+  if(valor > 100000 && !confirm(`Confirmar gasto de ${fmtV(valor)}? Está acima de R$100.000.`)) return;
+  await sbPost('gastos',{descricao:desc,valor,conta,mes:mesStr(mesAtual.y,mesAtual.m),categoria:cat,forma_pagamento:'Débito',data_lancamento:hoje.toLocaleDateString('pt-BR')});
+  await abaterSaldo(conta==='empresa'?'llg':'pessoal',valor);
+  // Mostrar no chat
+  addMsg(`<b>${desc}</b> <span class="bdt ${conta==='empresa'?'bd-l':'bd-p'}">${conta==='empresa'?'LLG':'Pes.'}</span><br><span style="color:var(--red)">-${fmtV(valor)}</span> · ${cat}`,'g');
+  document.getElementById('grDesc').value='';
+  document.getElementById('grValor').value='';
+  document.getElementById('gastoRapidoChat').style.display='none';
+  toast('Gasto registrado!');
+}
+
+// FOTO DE NOTA FISCAL
+async function enviarFoto(input){
+  const file=input.files[0];
+  if(!file)return;
+  addMsg('📷 Analisando nota fiscal...','s');
+  showTyping();
+  try{
+    const base64=await new Promise((res,rej)=>{
+      const r=new FileReader();
+      r.onload=()=>res(r.result.split(',')[1]);
+      r.onerror=()=>rej(new Error('Erro ao ler imagem'));
+      r.readAsDataURL(file);
+    });
+    const sysFoto = await montarSysPrompt();
+    const r=await fetch('/api/chat',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        model:'claude-sonnet-4-6',max_tokens:600,
+        system:sysFoto+'\nO usuário enviou uma foto de nota fiscal ou cupom. Extraia o valor total, estabelecimento e categorize o gasto. A categoria deve ser UMA dessas: "Alimentação", "Combustível", "Lazer", "Pet", "Compras", "Farmácia", "Filhos" ou "Outros". Responda SOMENTE em JSON: {"a":"reg","desc":"nome estabelecimento","valor":0.00,"conta":"pessoal","mes":"Abril","cat":"Alimentação|Combustível|Lazer|Pet|Compras|Farmácia|Filhos|Outros","msg":"confirmação"}',
+        messages:[{role:'user',content:[
+          {type:'image',source:{type:'base64',media_type:file.type,data:base64}},
+          {type:'text',text:'Registre este gasto da nota fiscal'}
+        ]}]
+      })
+    });
+    const d=await r.json(),resp=d.content?.[0]?.text||'';
+    rmTyping();
+    let parsed=null;
+    try{parsed=JSON.parse(resp.replace(/```json|```/g,'').trim());}catch(e){}
+    if(parsed&&parsed.a==='reg'){
+      const mesISONota = normalizarMesIA(parsed.mes);
+      addMsg(`<b>${parsed.desc}</b> <span class="bdt bd-p">Pes.</span><br><span style="color:var(--red)">-${fmtV(parsed.valor)}</span> · ${parsed.cat}<br><span style="font-size:12px;color:var(--green)">${parsed.msg}</span>`,'g');
+      await sbPost('gastos',{descricao:parsed.desc,valor:parsed.valor,conta:parsed.conta||'pessoal',mes:mesISONota,categoria:parsed.cat,forma_pagamento:'Nota fiscal',data_lancamento:hoje.toLocaleDateString('pt-BR')});
+      await abaterSaldo('pessoal',parsed.valor);
+      toast('Nota registrada!');
+    }else{
+      addMsg(resp||'Não consegui ler a nota. Tente novamente.','a');
+    }
+  }catch(e){rmTyping();addMsg('Erro ao processar imagem.','a');}
+  input.value='';
+}
+
+// SALDOS DINAMICOS
+let saldos = {llg: 0, pessoal: 0};
+
+async function carregarSaldos(){
+  try{
+    const data = await sbGet('saldos','select=*');
+    if(Array.isArray(data)) data.forEach(s=>{saldos[s.id]=s.valor;});
+  }catch(e){}
+  atualizarPillsSaldo();
+}
+
+function atualizarPillsSaldo(){
+  const pillLLG = document.getElementById('saldoLLG');
+  const pillPes = document.getElementById('saldoPes');
+  pillLLG.textContent = `LLG ${fmtV(saldos.llg)}`;
+  pillPes.textContent = `Pes. ${fmtV(saldos.pessoal)}`;
+  // Cor da pill: vermelho se negativo, normal se positivo
+  pillLLG.className = 'pill ' + (saldos.llg < 0 ? 'pill-r' : 'pill-b');
+  pillPes.className = 'pill ' + (saldos.pessoal < 0 ? 'pill-r' : 'pill-g');
+  // Atualizar painel também
+  const painelLLG=document.getElementById('painelLLG');
+  const painelPes=document.getElementById('painelPes');
+  const painelData=document.getElementById('painelData');
+  if(painelLLG){
+    painelLLG.textContent=fmtV(saldos.llg);
+    painelLLG.style.color = saldos.llg < 0 ? 'var(--red)' : 'var(--blue)';
+  }
+  if(painelPes){
+    painelPes.textContent=fmtV(saldos.pessoal);
+    painelPes.style.color = saldos.pessoal < 0 ? 'var(--red)' : 'var(--green)';
+  }
+  if(painelData) painelData.textContent=hoje.toLocaleDateString('pt-BR');
+}
+
+async function abaterSaldo(conta, valor){
+  // Permite saldo negativo para alertar de furo de caixa
+  saldos[conta] = (saldos[conta]||0) - valor;
+  await fetch(`${SB_URL}/rest/v1/saldos?id=eq.${conta}`,{method:'PATCH',headers:{...SB_HDR,'Prefer':'return=representation'},body:JSON.stringify({valor:saldos[conta],updated_at:new Date().toISOString()})});
+  atualizarPillsSaldo();
+  if(saldos[conta] < 0) toast(`⚠ Saldo ${conta==='llg'?'LLG':'pessoal'} negativo: ${fmtV(saldos[conta])}`, 4000);
+}
+
+async function reporSaldo(conta, valor){
+  saldos[conta] = (saldos[conta]||0) + valor;
+  await fetch(`${SB_URL}/rest/v1/saldos?id=eq.${conta}`,{method:'PATCH',headers:{...SB_HDR,'Prefer':'return=representation'},body:JSON.stringify({valor:saldos[conta],updated_at:new Date().toISOString()})});
+  atualizarPillsSaldo();
+}
+
+async function ajustarSaldo(conta){
+  const atual = saldos[conta]||0;
+  const novo = prompt(`Saldo atual: ${fmtV(atual)}\nNovo saldo:`, atual.toFixed(2));
+  if(novo===null||isNaN(parseFloat(novo)))return;
+  saldos[conta] = parseFloat(novo);
+  await fetch(`${SB_URL}/rest/v1/saldos?id=eq.${conta}`,{method:'PATCH',headers:{...SB_HDR,'Prefer':'return=representation'},body:JSON.stringify({valor:saldos[conta],updated_at:new Date().toISOString()})});
+  atualizarPillsSaldo();
+  toast('Saldo atualizado!');
+}
+// GRÁFICOS
+let chartsInstances = {};
+
+async function carregarGraficos(){
+  dadosFinanceiros = {};
+  const ano = parseInt(document.getElementById('gfAno')?.value || 2026);
+  const mesIni = parseInt(document.getElementById('gfMesIni')?.value || 1);
+  const mesFim = parseInt(document.getElementById('gfMesFim')?.value || 4);
+
+  // Gerar lista de meses no período
+  const meses = [];
+  const labels = [];
+  for(let m = mesIni; m <= mesFim; m++){
+    meses.push(`${ano}-${String(m).padStart(2,'0')}`);
+    labels.push(`${MESES_PT[m-1].slice(0,3)}/${String(ano).slice(2)}`);
+  }
+
+  const dados = await Promise.all(meses.map(m => calcularMes(m)));
+
+  const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const textColor = isDark ? '#8b93a8' : '#5a6278';
+  const gridColor = isDark ? '#2a3348' : '#e0e3e8';
+
+  Object.values(chartsInstances).forEach(c => { try{c.destroy();}catch(e){} });
+  chartsInstances = {};
+
+  // 1. Lucro líquido
+  chartsInstances.lucro = new Chart(document.getElementById('chartLucro'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Lucro Líquido',
+        data: dados.map(d => Math.round(d.lucro)),
+        backgroundColor: dados.map(d => d.lucro >= 0 ? '#3B6D11' : '#A32D2D'),
+        borderRadius: 6
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: textColor }, grid: { color: gridColor } },
+        y: { ticks: { color: textColor, callback: v => 'R$'+Number(v).toLocaleString('pt-BR') }, grid: { color: gridColor } }
+      }
+    }
+  });
+
+  // 2. Receita vs Custos vs Impostos
+  chartsInstances.receita = new Chart(document.getElementById('chartReceita'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Receita', data: dados.map(d => Math.round(d.receita)), backgroundColor: '#185FA5', borderRadius: 4 },
+        { label: 'Custos', data: dados.map(d => Math.round(d.cf + d.cv)), backgroundColor: '#BA7517', borderRadius: 4 },
+        { label: 'Impostos', data: dados.map(d => Math.round(d.impostos)), backgroundColor: '#A32D2D', borderRadius: 4 }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      plugins: { legend: { labels: { color: textColor, boxWidth: 12 } } },
+      scales: {
+        x: { ticks: { color: textColor }, grid: { color: gridColor } },
+        y: { ticks: { color: textColor, callback: v => 'R$'+Number(v).toLocaleString('pt-BR') }, grid: { color: gridColor } }
+      }
+    }
+  });
+
+  // 3. Gastos pessoais por categoria (período selecionado)
+  const gastosPromises = meses.map(ms => {
+    return sbGet('gastos', `select=*&mes=eq.${ms}&conta=eq.pessoal`);
+  });
+  const gastosResultados = await Promise.all(gastosPromises);
+  const porCat = {};
+  gastosResultados.forEach(raw => {
+    if(Array.isArray(raw)) raw.forEach(g => {
+      const cat = g.categoria || 'Outros';
+      porCat[cat] = (porCat[cat] || 0) + g.valor;
+    });
+  });
+  const catLabels = Object.keys(porCat).sort((a,b) => porCat[b]-porCat[a]);
+  const catVals = catLabels.map(k => Math.round(porCat[k]));
+  const catColors = ['#185FA5','#3B6D11','#BA7517','#A32D2D','#3C3489','#0F6E56','#854F0B','#5a6278','#378ADD','#97C459'];
+  chartsInstances.cat = new Chart(document.getElementById('chartCategorias'), {
+    type: 'doughnut',
+    data: {
+      labels: catLabels,
+      datasets: [{ data: catVals, backgroundColor: catColors.slice(0, catLabels.length), borderWidth: 2 }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      plugins: {
+        legend: { position: 'bottom', labels: { color: textColor, boxWidth: 12, padding: 8 } },
+        tooltip: { callbacks: { label: ctx => `${ctx.label}: ${fmtV(ctx.parsed)}` } }
+      }
+    }
+  });
+
+  // 4. Lucro acumulado 2026
+  let acum = 0;
+  const acumData = dados.map(d => { acum += d.lucro; return Math.round(acum); });
+  chartsInstances.saldo = new Chart(document.getElementById('chartSaldo'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Lucro acumulado 2026',
+        data: acumData,
+        borderColor: '#185FA5',
+        backgroundColor: 'rgba(24,95,165,0.1)',
+        fill: true, tension: 0.4,
+        pointBackgroundColor: '#185FA5', pointRadius: 5
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      plugins: { legend: { labels: { color: textColor } } },
+      scales: {
+        x: { ticks: { color: textColor }, grid: { color: gridColor } },
+        y: { ticks: { color: textColor, callback: v => 'R$'+Number(v).toLocaleString('pt-BR') }, grid: { color: gridColor } }
+      }
+    }
+  });
+}
+
+(async()=>{
+  dadosFinanceiros={};
+  await carregarSaldos();
+  await carregarContas();
+  await atualizarContas();
+  verificarNotificacoes();
+  document.getElementById('mesLabel').textContent=mesLabel(mesAtual.y,mesAtual.m);
+  document.getElementById('mesLabelRet').textContent=mesLabel(mesRet.y,mesRet.m);
+})();
