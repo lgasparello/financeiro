@@ -13,6 +13,17 @@
 <meta name="apple-mobile-web-app-title" content="LLG Financeiro">
 </head>
 <body>
+<!-- TELA DE LOGIN (aparece só quando AUTH_ENABLED e sem sessão) -->
+<div id="loginGate" style="display:none;position:fixed;inset:0;z-index:1000;background:var(--bg3);align-items:center;justify-content:center;padding:24px">
+  <div style="width:100%;max-width:360px;background:var(--bg);border:1px solid var(--border);border-radius:16px;padding:28px 22px;box-shadow:0 8px 40px rgba(0,0,0,.12);text-align:center">
+    <div style="width:64px;height:64px;margin:0 auto 14px;background:var(--blue);border-radius:16px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:22px;font-weight:700">LLG</div>
+    <div style="font-size:17px;font-weight:600;margin-bottom:4px">LLG Financeiro</div>
+    <div style="font-size:13px;color:var(--text3);margin-bottom:20px">Entre com seu e-mail. Chega um link mágico — clicou, tá dentro.</div>
+    <input id="loginEmail" type="email" inputmode="email" autocomplete="email" placeholder="seu@email.com" style="width:100%;padding:11px 13px;border-radius:var(--rs);border:1px solid var(--border2);background:var(--bg2);color:var(--text);font-size:14px;font-family:inherit;margin-bottom:10px">
+    <button id="loginBtn" style="width:100%;padding:12px;background:var(--blue);color:#fff;border:none;border-radius:var(--rs);font-size:14px;font-weight:600;cursor:pointer;font-family:inherit">Enviar link de acesso</button>
+    <div id="loginMsg" style="font-size:12px;color:var(--text3);margin-top:12px;min-height:16px"></div>
+  </div>
+</div>
 <div class="app">
   <div class="hdr">
     <div><div class="hdr-l">LLG Financeiro</div><div class="hdr-s" id="hdrSub">Lucas Gasparello</div></div>

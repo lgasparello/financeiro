@@ -16,6 +16,8 @@ import { sendMsg } from './chat-ia.js';
 import { ajustarSaldo, carregarSaldos, mesLabel, limparCacheFinanceiro } from './calculo.js';
 import { sbGet, carregarContas } from './dados.js';
 import { mesAtual, mesRet } from './estado.js';
+import { AUTH_ENABLED } from './config.js';
+import { garantirSessao, enviarLink, logout } from './auth.js';
 
 // --- Navegacao entre abas + exportacao JSON (orquestracao) ---
 async function gerarJSON(){
@@ -42,8 +44,8 @@ function showTab(id,btn){
 // retSels entra via spread de uiRetirada. Reproduz o namespace global do index.html original.
 Object.assign(window, uiContas, uiRetirada, uiRelatorio, uiPainel, uiGraficos, chat, { ajustarSaldo, showTab, gerarJSON });
 
-// --- Init ---
-(async()=>{
+// --- Carrega o app (só roda quando autorizado) ---
+async function carregarApp(){
   limparCacheFinanceiro();
   await carregarSaldos();
   await carregarContas();
@@ -51,6 +53,39 @@ Object.assign(window, uiContas, uiRetirada, uiRelatorio, uiPainel, uiGraficos, c
   verificarNotificacoes();
   document.getElementById('mesLabel').textContent=mesLabel(mesAtual.y,mesAtual.m);
   document.getElementById('mesLabelRet').textContent=mesLabel(mesRet.y,mesRet.m);
+  if(AUTH_ENABLED){
+    const sub=document.getElementById('hdrSub');
+    if(sub){ sub.style.cursor='pointer'; sub.title='Toque para sair'; sub.onclick=()=>{ if(confirm('Sair da conta?')) logout(); }; }
+  }
+}
+
+// --- Tela de login (trava o app até o usuário entrar) ---
+function mostrarLogin(){
+  const gate=document.getElementById('loginGate');
+  const btn=document.getElementById('loginBtn'), inp=document.getElementById('loginEmail'), msg=document.getElementById('loginMsg');
+  if(!gate||!btn||!inp) return;
+  gate.style.display='flex';
+  const enviar=async()=>{
+    const email=(inp.value||'').trim();
+    if(!email || !email.includes('@')){ msg.textContent='Digite um e-mail válido.'; return; }
+    btn.disabled=true; msg.textContent='Enviando...';
+    const r=await enviarLink(email);
+    btn.disabled=false;
+    msg.textContent = r.ok
+      ? '✅ Link enviado! Abra seu e-mail e clique no link para entrar.'
+      : '❌ Não consegui enviar: '+(r.erro||'tente de novo')+'.';
+  };
+  btn.onclick=enviar;
+  inp.addEventListener('keydown', e=>{ if(e.key==='Enter') enviar(); });
+}
+
+// --- Entrada ---
+(async()=>{
+  if(AUTH_ENABLED){
+    const logado=await garantirSessao();
+    if(!logado){ mostrarLogin(); return; } // não carrega dados enquanto não logar
+  }
+  await carregarApp();
 })();
 
 // --- PWA: registra o service worker (app-shell offline). Falha silenciosa se nao suportado. ---

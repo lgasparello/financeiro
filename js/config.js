@@ -12,3 +12,7 @@ export const CATEGORIAS=['Alimentação','Combustível','Lazer','Pet','Compras',
 
 // Componente de retirada 'Lucros': fallback injetado quando nao vem do banco (tabela componentes_retirada).
 export const LUCROS_FALLBACK={id:99,nome:'Lucros',chave:'lucros',valor:0,ativo:true,mes_fim:null};
+
+// Liga/desliga o login por link magico. Comece FALSE (app roda como hoje, via anon).
+// No go-live: vira true + deploy + configurar redirect no Supabase + habilitar RLS.
+export const AUTH_ENABLED=false;
