@@ -15,4 +15,4 @@ export const LUCROS_FALLBACK={id:99,nome:'Lucros',chave:'lucros',valor:0,ativo:t
 
 // Liga/desliga o login por link magico. Comece FALSE (app roda como hoje, via anon).
 // No go-live: vira true + deploy + configurar redirect no Supabase + habilitar RLS.
-export const AUTH_ENABLED=false;
+export const AUTH_ENABLED=true;

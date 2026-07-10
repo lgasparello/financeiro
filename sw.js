@@ -1,7 +1,7 @@
 // Service worker do LLG Financeiro — app-shell offline.
 // REGRA DE OURO: dado financeiro (Supabase, /api/chat) NUNCA e cacheado — sempre rede.
 // So o "casco" estatico (HTML/CSS/JS/icones) fica em cache para abrir offline.
-const CACHE = 'llg-fin-v1';
+const CACHE = 'llg-fin-v2';
 const SHELL = [
   '/', '/index.html', '/css/app.css',
   '/js/app.js', '/js/config.js', '/js/estado.js', '/js/dados.js', '/js/calculo.js',
