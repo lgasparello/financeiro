@@ -1971,8 +1971,16 @@ Se é parcelada (ex: "parcelar em 5x começando em junho"), use mes_inicio do pr
 3. EDITAR CONTA EXISTENTE (mudar valor, dia, beneficiário, mes_inicio, mes_fim):
 {"a":"edit_conta","id":0,"campo":"valor|dia_vencimento|beneficiario|nome|mes_inicio|mes_fim","valor_novo":"novo valor","msg":"confirmação"}
 
-4. DESATIVAR CONTA (encerrar pagamento):
+4. DESATIVAR CONTA (encerrar pagamento — usar apenas quando o usuário disser claramente "cancelar", "encerrar", "não pago mais" ou "excluir"):
 {"a":"desativar_conta","id":0,"msg":"confirmação"}
+
+⚠ IMPORTANTE — "QUITAR" NÃO É DESATIVAR:
+Quando o usuário disser "quitar", "quitei", "paguei tudo", "adiantei parcelas", "paguei as restantes" ou similar sobre um parcelamento, ISSO É PAGAMENTO, não desativação. NUNCA use "desativar_conta" nesse caso, e NUNCA altere o mes_fim para "encurtar" o parcelamento.
+
+O correto é:
+- Se o usuário DISSE explicitamente quantas parcelas quitou (ex: "quitei 3 parcelas do Insta360"): use "pagar_conta" com valor = N × valor_parcela, no mês atual.
+- Se o usuário NÃO disse quantas ("quitei o Insta360", "paguei tudo"): PERGUNTE antes de agir. Responda em texto perguntando quantas parcelas restantes ele pagou de uma vez. Só depois da resposta, use "pagar_conta".
+- Se o usuário quitar TODAS as parcelas restantes de um parcelamento, ainda assim NÃO desative a conta nem mude o mes_fim. Apenas registre o pagamento com o valor total. A conta continuará ativa até o mes_fim original.
 
 5. MARCAR CONTA COMO PAGA:
 {"a":"pagar_conta","id":0,"valor":0.00,"forma":"pes|llg|crt","msg":"confirmação"}
