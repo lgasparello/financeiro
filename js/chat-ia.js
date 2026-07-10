@@ -139,6 +139,18 @@ function showTyping(){
 }
 function rmTyping(){const t=document.getElementById('typ');if(t)t.remove();}
 
+// Chip de sugestão: joga o texto no input e envia.
+function sg(el){
+  const inp=document.getElementById('inp');
+  if(!inp) return;
+  inp.value=el.textContent;
+  sendMsg();
+}
+// Enter envia; Shift+Enter quebra linha.
+function hk(e){
+  if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendMsg(); }
+}
+
 async function sendMsg(){
   const inp=document.getElementById('inp'),txt=inp.value.trim();if(!txt)return;
   inp.value='';addMsg(txt,'u');showTyping();
@@ -205,8 +217,7 @@ async function sendMsg(){
   }catch(e){rmTyping();addMsg('Erro de conexão.','a');}
 }
 
-async function processarAcaoChat(parsed){
-// Normaliza qualquer formato de "mes" que venha da IA para YYYY-MM
+// Normaliza qualquer formato de "mes" que venha da IA para YYYY-MM (usada por processarAcaoChat E enviarFoto)
 function normalizarMesIA(m){
   if(!m) return mesStr(mesAtual.y, mesAtual.m);
   // Já está em YYYY-MM
@@ -223,6 +234,7 @@ function normalizarMesIA(m){
   return mesStr(mesAtual.y, mesAtual.m);
 }
 
+async function processarAcaoChat(parsed){
   if(parsed.a==='reg'){
     const forma=parsed.forma||'deb';
     const mesISO = normalizarMesIA(parsed.mes);
@@ -466,4 +478,4 @@ async function enviarFoto(input){
 
 // SALDOS DINAMICOS
 
-export { montarSysPrompt, addMsg, showTyping, rmTyping, sendMsg, processarAcaoChat, toggleGastoRapido, salvarGastoRapido, enviarFoto };
+export { montarSysPrompt, addMsg, showTyping, rmTyping, sg, hk, sendMsg, processarAcaoChat, toggleGastoRapido, salvarGastoRapido, enviarFoto };

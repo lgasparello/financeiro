@@ -17,7 +17,6 @@ function mesStr(y,m){return `${y}-${String(m+1).padStart(2,'0')}`;}
 function mesLabel(y,m){return `${MESES_PT[m]} ${y}`;}
 function diasNoMes(y,m){return new Date(y,m+1,0).getDate();}
 function fmtV(v){return 'R$'+Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});}
-function fmtVl(v){return Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});}
 function formaLabel(f){return f==='llg'?'Débito LLG':f==='crt'?'Cartão':'Débito pessoal';}
 function formaBadge(f){return f==='llg'?'pb-llg':f==='crt'?'pb-crt':'pb-pes';}
 function isHoje(y,m){return y===hoje.getFullYear()&&m===hoje.getMonth();}
@@ -262,4 +261,4 @@ async function ajustarSaldo(conta){
 }
 // GRÁFICOS
 
-export { calcularTotais, mesStr, mesLabel, diasNoMes, fmtV, fmtVl, formaLabel, formaBadge, isHoje, contaAtivaNoMes, extrairMesISO, labelMesISO, calcularMes, getLucroAnterior, carregarSaldos, atualizarPillsSaldo, abaterSaldo, reporSaldo, ajustarSaldo };
+export { calcularTotais, mesStr, mesLabel, diasNoMes, fmtV, formaLabel, formaBadge, isHoje, contaAtivaNoMes, extrairMesISO, labelMesISO, calcularMes, getLucroAnterior, carregarSaldos, atualizarPillsSaldo, abaterSaldo, reporSaldo, ajustarSaldo };

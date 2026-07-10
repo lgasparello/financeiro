@@ -1,10 +1,15 @@
 # Bugs pré-existentes (encontrados durante a refatoração)
 
-Estes bugs **já existiam** no `index.html` monolítico antes da refatoração e foram
-**preservados exatamente** (comportamento inalterado). Estão anotados aqui para
-correção numa etapa futura — a refatoração desta sessão não os toca.
+Estes bugs **já existiam** no `index.html` monolítico. Durante a refatoração foram
+**preservados exatamente** e anotados aqui; depois, na fase de limpeza, os **três
+foram corrigidos**. Referências de linha são do `index.html` **original** (commit `05c89da`).
 
-Referências de linha são do `index.html` **original** (commit `05c89da`, antes da separação).
+## ✅ Status: todos resolvidos (fase de limpeza)
+- **#1 `sg`/`hk`** — implementados em `js/chat-ia.js` (chips de sugestão preenchem o input e enviam; Enter envia, Shift+Enter quebra linha). Exportados e expostos no `window`.
+- **#2 `normalizarMesIA`** — promovida ao escopo do módulo `js/chat-ia.js`; `enviarFoto` volta a funcionar (foto de nota fiscal com mês).
+- **#3 IDs duplicados** — bloco morto `#gastoRapido` (topo) removido do `index.html`; agora `getElementById('grDesc')` etc. resolvem para o bloco do chat, e o gasto rápido lê os campos certos.
+
+Detalhes originais preservados abaixo para referência.
 
 ---
 
