@@ -58,32 +58,28 @@ function labelMesISO(iso){
 }
 
 
-// --- Calculo do mes ---
-async function calcularMes(ms){
-  if(dadosFinanceiros[ms]) return dadosFinanceiros[ms];
-  // Garantir que contas estão carregadas
-  if(!contas.length) await carregarContas();
-
-  // Componentes de retirada (precisamos pra projetar retiradas fixas não enviadas)
-  if(!componentesRet.length){
-    const compRaw = await sbGet('componentes_retirada','select=*&ativo=eq.true&order=id');
-    setComponentesRet(Array.isArray(compRaw) ? compRaw : []);
-  }
-
-  const [recsRaw, impsRaw, pagsTodosRaw, gastosRaw, retiradasRaw] = await Promise.all([
-    sbGet('receitas', `select=*&mes=eq.${ms}`),
-    sbGet('impostos', `select=*&mes=eq.${ms}`),
-    sbGet('pagamentos_mes', `select=*&mes=eq.${ms}`),
-    sbGet('gastos', `select=*&mes=eq.${ms}`),
-    sbGet('retiradas', `select=*&mes=eq.${ms}`)
-  ]);
-  const receitas = Array.isArray(recsRaw) ? recsRaw : [];
-  const impostos = Array.isArray(impsRaw) ? impsRaw : [];
-  const pagsTodos = Array.isArray(pagsTodosRaw) ? pagsTodosRaw : [];
+// --- Nucleo puro do calculo do mes ---
+// Recebe TODOS os dados ja carregados (arrays crus do banco OU do extrato C6) e devolve os totais.
+// Sem I/O, sem cache, sem globais: alvo da auditoria de saldo e conciliacao de extrato.
+// Parametros:
+//   ms            "YYYY-MM" (usado so para separar ano/mes na projecao de CF pendente)
+//   receitas      linhas da tabela receitas do mes
+//   impostos      linhas de impostos do mes
+//   pagamentos    linhas de pagamentos_mes do mes (TODAS; o filtro pago=true e feito aqui)
+//   gastos        linhas de gastos do mes
+//   retiradas     linhas de retiradas do mes (TODAS; o filtro enviado=true e feito aqui)
+//   contas        contas_fixas ativas (para CF empresa pendente)
+//   componentesRet componentes_retirada (para retiradas fixas pendentes)
+function calcularTotais({ ms, receitas: receitasRaw, impostos: impostosRaw, pagamentos: pagamentosRaw, gastos: gastosRaw, retiradas: retiradasRaw, contas: contasRaw, componentesRet: componentesRaw }){
+  const receitas = Array.isArray(receitasRaw) ? receitasRaw : [];
+  const impostos = Array.isArray(impostosRaw) ? impostosRaw : [];
+  const pagsTodos = Array.isArray(pagamentosRaw) ? pagamentosRaw : [];
   const pagamentos = pagsTodos.filter(p=>p.pago);
   const gastos = Array.isArray(gastosRaw) ? gastosRaw : [];
   const retiradasAll = Array.isArray(retiradasRaw) ? retiradasRaw : [];
   const retiradas = retiradasAll.filter(r=>r.enviado);
+  const contas = Array.isArray(contasRaw) ? contasRaw : [];
+  const componentesRet = Array.isArray(componentesRaw) ? componentesRaw : [];
 
   // === REAIS ===
   // Receita real = só as recebidas (recebido=true ou campo ausente)
@@ -143,8 +139,6 @@ async function calcularMes(ms){
   // Lucro projetado: o que vai sobrar se tudo previsto se confirmar
   const lucroProjetado = receitaTotalProjetada - cfTotalProjetado - cvEmpresa - totalImpostos;
 
-  console.log(`[${ms}] Receita R:${totalReceitaReal} P:${totalReceitaPrev} | CF R:${cfReal} Pend:${cfEmpresaPendente+cfRetiradasPendente} | CV:${cvEmpresa} | Imp:${totalImpostos} | Lucro R:${lucroReal} Proj:${lucroProjetado}`);
-
   const result = {
     receita: totalReceitaReal,
     receitaPrevista: totalReceitaPrev,
@@ -160,6 +154,42 @@ async function calcularMes(ms){
     receitaItens: receitas,
     impostosItens: impostos
   };
+  return result;
+}
+
+// --- Calculo do mes (casca: cache + I/O + delega ao nucleo puro calcularTotais) ---
+async function calcularMes(ms){
+  if(dadosFinanceiros[ms]) return dadosFinanceiros[ms];
+  // Garantir que contas estão carregadas
+  if(!contas.length) await carregarContas();
+
+  // Componentes de retirada (precisamos pra projetar retiradas fixas não enviadas)
+  if(!componentesRet.length){
+    const compRaw = await sbGet('componentes_retirada','select=*&ativo=eq.true&order=id');
+    setComponentesRet(Array.isArray(compRaw) ? compRaw : []);
+  }
+
+  const [recsRaw, impsRaw, pagsTodosRaw, gastosRaw, retiradasRaw] = await Promise.all([
+    sbGet('receitas', `select=*&mes=eq.${ms}`),
+    sbGet('impostos', `select=*&mes=eq.${ms}`),
+    sbGet('pagamentos_mes', `select=*&mes=eq.${ms}`),
+    sbGet('gastos', `select=*&mes=eq.${ms}`),
+    sbGet('retiradas', `select=*&mes=eq.${ms}`)
+  ]);
+
+  const result = calcularTotais({
+    ms,
+    receitas: recsRaw,
+    impostos: impsRaw,
+    pagamentos: pagsTodosRaw,
+    gastos: gastosRaw,
+    retiradas: retiradasRaw,
+    contas,
+    componentesRet
+  });
+
+  console.log(`[${ms}] Receita R:${result.receita} P:${result.receitaPrevista} | CF R:${result.cf} Pend:${result.cfPendente} | CV:${result.cv} | Imp:${result.impostos} | Lucro R:${result.lucro} Proj:${result.lucroProjetado}`);
+
   dadosFinanceiros[ms] = result;
   return result;
 }
@@ -232,4 +262,4 @@ async function ajustarSaldo(conta){
 }
 // GRÁFICOS
 
-export { mesStr, mesLabel, diasNoMes, fmtV, fmtVl, formaLabel, formaBadge, isHoje, contaAtivaNoMes, extrairMesISO, labelMesISO, calcularMes, getLucroAnterior, carregarSaldos, atualizarPillsSaldo, abaterSaldo, reporSaldo, ajustarSaldo };
+export { calcularTotais, mesStr, mesLabel, diasNoMes, fmtV, fmtVl, formaLabel, formaBadge, isHoje, contaAtivaNoMes, extrairMesISO, labelMesISO, calcularMes, getLucroAnterior, carregarSaldos, atualizarPillsSaldo, abaterSaldo, reporSaldo, ajustarSaldo };
