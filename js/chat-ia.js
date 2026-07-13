@@ -1,7 +1,7 @@
 // chat-ia.js — Chat IA: SYS prompt dinamico, envio de mensagem/foto, gasto rapido e acoes.
 // O SYS prompt (montarSysPrompt) e mantido byte-a-byte. normalizarMesIA segue ANINHADA em
 // processarAcaoChat de proposito (ver BUGS.md #2) para nao alterar comportamento.
-import { SB_URL, SB_HDR } from './config.js';
+import { SB_URL, SB_HDR, MESES_PT } from './config.js';
 import { hoje, mesAtual, mesRet } from './estado.js';
 import { sbGet, sbPost, sbPatch, sbDelete, sbUpsert, salvarStatusMes, contas, statusMes, carregarContas, carregarStatusMes, toast } from './dados.js';
 import { mesStr, mesLabel, fmtV, calcularMes, limparCacheFinanceiro, abaterSaldo, reporSaldo, atualizarPillsSaldo, saldos } from './calculo.js';

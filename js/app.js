@@ -18,6 +18,7 @@ import { sbGet, carregarContas } from './dados.js';
 import { mesAtual, mesRet } from './estado.js';
 import { AUTH_ENABLED } from './config.js';
 import { garantirSessao, enviarLink, logout } from './auth.js';
+import { renderRazaoBadge, wireOfxImport } from './ui-razao.js';
 
 // --- Navegacao entre abas + exportacao JSON (orquestracao) ---
 async function gerarJSON(){
@@ -53,6 +54,9 @@ async function carregarApp(){
   verificarNotificacoes();
   document.getElementById('mesLabel').textContent=mesLabel(mesAtual.y,mesAtual.m);
   document.getElementById('mesLabelRet').textContent=mesLabel(mesRet.y,mesRet.m);
+  // Livro-razão: selo de saldo auditável + import de OFX (aba Painel)
+  wireOfxImport();
+  renderRazaoBadge();
   if(AUTH_ENABLED){
     const sub=document.getElementById('hdrSub');
     if(sub){ sub.style.cursor='pointer'; sub.title='Toque para sair'; sub.onclick=()=>{ if(confirm('Sair da conta?')) logout(); }; }
