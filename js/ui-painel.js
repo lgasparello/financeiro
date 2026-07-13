@@ -3,6 +3,7 @@ import { MESES_PT } from './config.js';
 import { hoje, mesPainel } from './estado.js';
 import { sbGet, contas } from './dados.js';
 import { calcularMes, mesStr, mesLabel, fmtV, limparCacheFinanceiro, saldos } from './calculo.js';
+import { renderDAS } from './ui-das.js';
 
 async function carregarPainel(){
   limparCacheFinanceiro(); // limpar cache para recalcular
@@ -123,6 +124,7 @@ async function carregarPainel(){
       <div class="mc"><div class="mc-lbl">Lucro empresa (jan–${MESES_PT[mesPainel.m].slice(0,3).toLowerCase()})</div><div class="mc-val" style="color:${lucroAcum>=0?'var(--green)':'var(--red)'}">${fmtV(lucroAcum)}</div></div>
       <div class="mc"><div class="mc-lbl">Saldo pessoal atual</div><div class="mc-val" style="color:${saldos.pessoal>=0?'var(--blue)':'var(--red)'}">${fmtV(saldos.pessoal)}</div></div>
     </div>`;
+  renderDAS();
 }
 
 // LUCRO DO MES ANTERIOR (dinamico para retirada)
